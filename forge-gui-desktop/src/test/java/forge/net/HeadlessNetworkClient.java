@@ -34,6 +34,7 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
     private final String username;
     private final String hostname;
     private final int port;
+    private final NetworkInteractionProbe probe;
 
     private FGameClient client;
     private ClientGameLobby lobby;
@@ -54,9 +55,14 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
     private final AtomicLong eventStateMismatches = new AtomicLong(0);
 
     public HeadlessNetworkClient(String username, String hostname, int port) {
+        this(username, hostname, port, null);
+    }
+
+    public HeadlessNetworkClient(String username, String hostname, int port, NetworkInteractionProbe probe) {
         this.username = username;
         this.hostname = hostname;
         this.port = port;
+        this.probe = probe;
     }
 
     public boolean connect(long timeoutMs) {
@@ -287,6 +293,12 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
             this.client = client;
         }
 
+        private void probeGameState(String source) {
+            if (client.probe != null) {
+                client.probe.onGameState(source, getGameView(), getLocalPlayers());
+            }
+        }
+
         /**
          * Cancel any pending auto-response. Called when a new prompt arrives
          * to prevent stale responses from interfering with the new prompt.
@@ -331,6 +343,7 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
         public void applyDelta(DeltaPacket packet) {
             // First, process the delta packet (deserialize, update tracker, etc.)
             super.applyDelta(packet);
+            probeGameState("applyDelta");
 
             // Then notify the client for logging/verification
             client.onDeltaPacketReceived(packet);
@@ -339,6 +352,7 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
         @Override
         public void setGameView(forge.game.GameView gameView, long sequenceNumber) {
             super.setGameView(gameView, sequenceNumber);
+            probeGameState("setGameView seq=" + sequenceNumber);
 
             // Notify the client when this is a full state sync (sequenceNumber >= 0)
             if (sequenceNumber >= 0) {
@@ -396,10 +410,19 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
         @Override
         public void showPromptMessage(forge.game.player.PlayerView playerView, String message, forge.game.card.CardView cv) {
             netLog.info("Prompt: {}", message);
+            if (client.probe != null) {
+                client.probe.onPrompt(playerView, message, cv);
+            }
 
             // Detect player selection prompts (like "who goes first")
             // These contain "Click on the portrait" in the message
             if (message != null && message.contains("Click on the portrait") && gameController != null) {
+                if (client.probe != null) {
+                    GameView gv = getGameView();
+                    if (gv != null && gv.getPlayers() != null) {
+                        client.probe.onSelectablePlayers(gv.getPlayers(), "portrait prompt");
+                    }
+                }
                 netLog.info("Detected player selection prompt, auto-selecting...");
                 scheduleAutoResponse(() -> {
                     // Get the game view and select the first player (or self)
@@ -430,6 +453,12 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
         public void updateButtons(forge.game.player.PlayerView owner, boolean okEnabled, boolean cancelEnabled, boolean focusOk) {
             netLog.info("updateButtons(ok): okEnabled={}, cancelEnabled={}, controller={}",
                     okEnabled, cancelEnabled, gameController != null ? "set" : "null");
+            if (client.probe != null) {
+                client.probe.onButtons(owner,
+                        forge.util.Localizer.getInstance().getMessage("lblOK"),
+                        forge.util.Localizer.getInstance().getMessage("lblCancel"),
+                        okEnabled, cancelEnabled, focusOk);
+            }
             // Auto-respond to button prompts (mulligan, priority, etc.)
             if (gameController != null && okEnabled) {
                 netLog.info("Auto-clicking OK for player: {}",
@@ -442,6 +471,9 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
         public void updateButtons(forge.game.player.PlayerView owner, String label1, String label2, boolean enable1, boolean enable2, boolean focus1) {
             netLog.info("updateButtons(labels): '{}'/{}, '{}'/{}, controller={}",
                     label1, enable1, label2, enable2, gameController != null ? "set" : "null");
+            if (client.probe != null) {
+                client.probe.onButtons(owner, label1, label2, enable1, enable2, focus1);
+            }
             // Auto-respond to labeled button prompts - click first enabled button
             if (gameController != null && (enable1 || enable2)) {
                 String clickTarget = enable1 ? label1 : label2;
@@ -467,6 +499,9 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
         @Override
         public void setSelectables(Iterable<forge.game.card.CardView> cards, int min, int max) {
             super.setSelectables(cards, min, max);
+            if (client.probe != null) {
+                client.probe.onSelectables(cards, min, max);
+            }
             synchronized (pendingSelectables) {
                 // Track selectable cards for multi-selection prompts
                 pendingSelectables.clear();
@@ -482,6 +517,25 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
                     selectNextCard();
                 }
             }
+        }
+
+        @Override
+        public void setWeaklySelectable(Iterable<forge.game.card.CardView> cards) {
+            super.setWeaklySelectable(cards);
+            if (client.probe != null) {
+                client.probe.onWeakSelectables(cards);
+            }
+        }
+
+        @Override
+        public forge.game.spellability.SpellAbilityView getAbilityToPlay(
+                forge.game.card.CardView hostCard,
+                java.util.List<forge.game.spellability.SpellAbilityView> abilities,
+                forge.util.ITriggerEvent triggerEvent) {
+            if (client.probe != null) {
+                client.probe.onAbilityChoices(hostCard, abilities);
+            }
+            return super.getAbilityToPlay(hostCard, abilities, triggerEvent);
         }
 
         /**

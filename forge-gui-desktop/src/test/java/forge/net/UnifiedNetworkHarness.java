@@ -69,6 +69,8 @@ public class UnifiedNetworkHarness implements IHasForgeLog {
     private boolean useAiForRemotePlayers = true;
     private boolean commander = false;
     private List<Deck> decks = null;
+    private NetworkInteractionProbe interactionProbe = null;
+    private boolean stopWhenProbeSatisfied = false;
 
     // Runtime state
     private FServerManager server;
@@ -119,6 +121,16 @@ public class UnifiedNetworkHarness implements IHasForgeLog {
      */
     public UnifiedNetworkHarness useAiForRemotePlayers(boolean enable) {
         this.useAiForRemotePlayers = enable;
+        return this;
+    }
+
+    public UnifiedNetworkHarness interactionProbe(NetworkInteractionProbe probe) {
+        this.interactionProbe = probe;
+        return this;
+    }
+
+    public UnifiedNetworkHarness stopWhenProbeSatisfied(boolean enable) {
+        this.stopWhenProbeSatisfied = enable;
         return this;
     }
 
@@ -385,13 +397,15 @@ public class UnifiedNetworkHarness implements IHasForgeLog {
             waitForRemoteGameCompletion(result, hostedMatch);
 
             // 8. Wait for clients to finish
-            clientsFinishedLatch.await(10, TimeUnit.SECONDS);
+            if (!stopWhenProbeSatisfied) {
+                clientsFinishedLatch.await(10, TimeUnit.SECONDS);
+            }
 
             // 9. Collect metrics from clients
             collectRemoteClientMetrics(result);
 
             // Validate result
-            result.success = result.gameCompleted &&
+            result.success = (result.gameCompleted || stopWhenProbeSatisfied) &&
                     result.deltaPacketsReceived > 0 &&
                     result.turnCount > 0;
 
@@ -430,7 +444,7 @@ public class UnifiedNetworkHarness implements IHasForgeLog {
             long staggerDelay = 500L + (clientIndex * 3000L);
             Thread.sleep(staggerDelay);
 
-            client = new HeadlessNetworkClient(clientName, "localhost", port);
+            client = new HeadlessNetworkClient(clientName, "localhost", port, interactionProbe);
             synchronized (remoteClients) {
                 remoteClients.add(client);
             }
@@ -594,6 +608,12 @@ public class UnifiedNetworkHarness implements IHasForgeLog {
                 break;
             }
 
+            if (stopWhenProbeSatisfied && interactionProbe != null && interactionProbe.sawGameStateAfterInteraction()) {
+                result.turnCount = game != null ? game.getPhaseHandler().getTurn() : 0;
+                netLog.info("Probe satisfied after {} turn(s); ending spike harness early", result.turnCount);
+                return;
+            }
+
             // Fail fast if any remote client has disconnected unexpectedly
             synchronized (remoteClients) {
                 for (HeadlessNetworkClient client : remoteClients) {
@@ -686,6 +706,16 @@ public class UnifiedNetworkHarness implements IHasForgeLog {
     private void cleanup() {
         netLog.info("Cleaning up...");
 
+        // Detach server-side remote GUI proxies before closing clients. Probe-mode
+        // tests can stop while the game thread is still producing updates.
+        if (server != null) {
+            try {
+                server.clearPlayerGuis();
+            } catch (Exception e) {
+                // Ignore
+            }
+        }
+
         // Close clients
         synchronized (remoteClients) {
             for (HeadlessNetworkClient client : remoteClients) {
@@ -707,15 +737,6 @@ public class UnifiedNetworkHarness implements IHasForgeLog {
                 Thread.currentThread().interrupt();
             }
             clientExecutor = null;
-        }
-
-        // Clear player GUIs between games
-        if (server != null) {
-            try {
-                server.clearPlayerGuis();
-            } catch (Exception e) {
-                // Ignore
-            }
         }
 
         // Stop server

@@ -9,7 +9,9 @@ import forge.gamemodes.net.NetworkLogConfig;
 import forge.gamemodes.net.server.DeltaSyncManager;
 import forge.gamemodes.net.server.RemoteClientGuiGame;
 import forge.localinstance.properties.ForgeConstants;
+import forge.localinstance.properties.ForgePreferences.FPref;
 import forge.deck.Deck;
+import forge.model.FModel;
 import forge.net.analysis.AnalysisResult;
 import forge.net.analysis.GameLogMetrics;
 import forge.net.analysis.NetworkLogAnalyzer;
@@ -176,6 +178,44 @@ public class NetworkPlayIntegrationTest implements IHasForgeLog {
 
         netLog.info("Test PASSED: {} turns, {} setGameView updates, 0 send errors",
                 result.turnCount, result.clientSetGameViewCount);
+    }
+
+    @Test(timeOut = 90000, description = "Probe remote human client-visible state and interaction callbacks")
+    public void testRemoteHumanInteractionProbe() {
+        netLog.info("Starting remote human interaction probe test...");
+
+        String oldShowActionable = FModel.getPreferences().getPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS);
+        FModel.getPreferences().setPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS, true);
+
+        try {
+            NetworkInteractionProbe probe = new NetworkInteractionProbe();
+            Deck deck1 = TestDeckLoader.createMinimalDeck("Mountain", 10);
+            Deck deck2 = TestDeckLoader.createMinimalDeck("Forest", 10);
+
+            UnifiedNetworkHarness.GameResult result = new UnifiedNetworkHarness()
+                    .playerCount(2)
+                    .remoteClients(1)
+                    .useAiForRemotePlayers(false)
+                    .interactionProbe(probe)
+                    .stopWhenProbeSatisfied(true)
+                    .decks(deck1, deck2)
+                    .gameTimeout(90000)
+                    .execute();
+
+            Assert.assertTrue(result.gameStarted, "Game should have started: " + result.toSummary());
+            Assert.assertTrue(result.deltaPacketsReceived > 0, "Remote client should receive delta packets");
+            Assert.assertTrue(probe.sawGameState(),
+                    "Probe should receive at least one GameView update. Log:\n" + probe.getLog());
+            Assert.assertTrue(probe.sawInteraction(),
+                    "Probe should receive at least one human interaction callback. Log:\n" + probe.getLog());
+            Assert.assertTrue(probe.sawGameStateAfterInteraction(),
+                    "Game should continue with at least one state update after an interaction. Log:\n" + probe.getLog());
+
+            netLog.info("Probe captured {} game-state updates and {} interaction callbacks",
+                    probe.getGameStateUpdateCount(), probe.getInteractionCount());
+        } finally {
+            FModel.getPreferences().setPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS, oldShowActionable);
+        }
     }
 
     @Test(timeOut = 150000, description = "UnifiedNetworkHarness local mode test")
