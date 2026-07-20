@@ -6,6 +6,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 
 namespace PremodernClient.Bridge;
@@ -23,10 +24,13 @@ public sealed class BridgeProcessClient : IDisposable
 {
     private readonly ConcurrentQueue<BridgeMessage> messages = new();
     private readonly ConcurrentQueue<string> diagnostics = new();
+    private readonly Channel<string> outboundLines = Channel.CreateUnbounded<string>(
+        new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
     private readonly CancellationTokenSource cancellation = new();
     private Process? process;
     private Task? stdoutReader;
     private Task? stderrReader;
+    private Task? stdinWriter;
     private bool disposed;
 
     public string Status { get; private set; } = "Stopped";
@@ -81,6 +85,36 @@ public sealed class BridgeProcessClient : IDisposable
         diagnostics.Enqueue($"Started bridge PID {process.Id}: {options.Host}:{options.Port}");
         stdoutReader = Task.Run(() => ReadStdoutAsync(process.StandardOutput, cancellation.Token));
         stderrReader = Task.Run(() => ReadStderrAsync(process.StandardError, cancellation.Token));
+        stdinWriter = Task.Run(() => WriteStdinAsync(process.StandardInput, cancellation.Token));
+    }
+
+    public bool TrySend(BridgeCommand command, out string? error)
+    {
+        error = null;
+        Process? activeProcess = process;
+        if (disposed || activeProcess == null || activeProcess.HasExited)
+        {
+            error = "Forge bridge is not running.";
+            return false;
+        }
+
+        string line;
+        try
+        {
+            line = BridgeCommandSerializer.Serialize(command);
+        }
+        catch (Exception exception)
+        {
+            error = exception.Message;
+            return false;
+        }
+        if (!outboundLines.Writer.TryWrite(line))
+        {
+            error = "Forge bridge command writer is closed.";
+            return false;
+        }
+        diagnostics.Enqueue($"G2_OUTBOUND {line}");
+        return true;
     }
 
     public bool TryDequeueMessage(out BridgeMessage? message)
@@ -145,6 +179,25 @@ public sealed class BridgeProcessClient : IDisposable
         }
     }
 
+    private async Task WriteStdinAsync(StreamWriter writer, CancellationToken token)
+    {
+        try
+        {
+            await foreach (string line in outboundLines.Reader.ReadAllAsync(token))
+            {
+                await writer.WriteLineAsync(line.AsMemory(), token);
+                await writer.FlushAsync(token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            diagnostics.Enqueue($"Bridge stdin writer failed: {exception.Message}");
+        }
+    }
+
     private void ProcessExited(object? sender, EventArgs eventArgs)
     {
         Process? exitedProcess = process;
@@ -160,6 +213,8 @@ public sealed class BridgeProcessClient : IDisposable
             return;
         }
         disposed = true;
+        outboundLines.Writer.TryComplete();
+        WaitForReader(stdinWriter);
 
         Process? activeProcess = process;
         if (activeProcess != null)

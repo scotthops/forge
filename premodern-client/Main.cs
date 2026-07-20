@@ -18,24 +18,46 @@ public partial class Main : Control
 		= "../forge-bridge/target/forge-bridge-2.0.14-SNAPSHOT-jar-with-dependencies.jar";
 	[Export(PropertyHint.Dir)] public string AssetsDirectory { get; set; } = "../forge-gui";
 	[Export] public string Host { get; set; } = "localhost";
-	[Export(PropertyHint.Range, "1,65535,1")]
-	public int Port { get; set; } = 36743;
+	[Export(PropertyHint.Range, "1,65535,1")] public int Port { get; set; } = 36743;
 	[Export] public string Username { get; set; } = "Godot Bridge Client";
 
 	private readonly BridgeClientState clientState = new();
 	private BridgeProcessClient? bridge;
 	private Label statusLabel = null!;
-	private RichTextLabel stateText = null!;
+	private Label gameSummary = null!;
+	private Label opponentHeader = null!;
+	private FlowContainer opponentBattlefield = null!;
+	private FlowContainer opponentGraveyard = null!;
+	private Label stackText = null!;
+	private Label yourHeader = null!;
+	private FlowContainer yourBattlefield = null!;
+	private FlowContainer yourHand = null!;
+	private FlowContainer yourGraveyard = null!;
+	private Label interactionText = null!;
+	private VBoxContainer playerChoices = null!;
+	private Button passPriorityButton = null!;
+	private Button okButton = null!;
+	private Button cancelButton = null!;
+	private Label actionStatus = null!;
+	private PanelContainer abilityPanel = null!;
+	private Label abilityTitle = null!;
+	private VBoxContainer abilityChoices = null!;
+	private long renderedInteractionSequence;
 	private bool stateObserved;
 	private bool interactionObserved;
 	private string? launchFailure;
+	private readonly Dictionary<int, ObservedCardLocation> observedCardLocations = new();
+	private readonly Dictionary<int, ObservedStackItem> observedStack = new();
+	private bool g3StateInitialized;
 
 	public override void _Ready()
 	{
-		statusLabel = GetNode<Label>("%ConnectionStatus");
-		stateText = GetNode<RichTextLabel>("%StateText");
-		bridge = new BridgeProcessClient();
+		BindSceneNodes();
+		passPriorityButton.Pressed += OnPassPriority;
+		okButton.Pressed += () => OnButton(BridgeButton.Ok);
+		cancelButton.Pressed += () => OnButton(BridgeButton.Cancel);
 
+		bridge = new BridgeProcessClient();
 		string projectDirectory = ProjectSettings.GlobalizePath("res://");
 		try
 		{
@@ -52,10 +74,8 @@ public partial class Main : Control
 		{
 			launchFailure = exception.Message;
 			GD.PushError($"Could not launch forge-bridge: {exception.Message}");
-			statusLabel.Text = $"Launch failed: {exception.Message}";
 		}
-
-		RenderState();
+		RenderUi();
 	}
 
 	public override void _Process(double delta)
@@ -80,6 +100,7 @@ public partial class Main : Control
 			clientState.Apply(message);
 			LogExceptionalMessage(message);
 			LogFirstObservation(message);
+			LogG3Observation(message);
 			changed = true;
 		}
 
@@ -88,7 +109,7 @@ public partial class Main : Control
 			: $"Launch failed: {launchFailure}";
 		if (changed)
 		{
-			RenderState();
+			RenderUi();
 		}
 	}
 
@@ -98,99 +119,314 @@ public partial class Main : Control
 		bridge = null;
 	}
 
-	private void RenderState()
+	private void BindSceneNodes()
 	{
-		StringBuilder text = new();
-		StateMessage? state = clientState.LatestState;
-		if (state == null)
-		{
-			text.AppendLine("Waiting for authoritative game state...");
-		}
-		else
-		{
-			text.AppendLine($"STATE  sequence={state.StateSequence} source={Value(state.Source)}");
-			text.AppendLine($"Turn: {state.Turn}");
-			text.AppendLine($"Phase: {Value(state.Phase)}");
-			text.AppendLine($"Active player: {PlayerName(state, state.ActivePlayerId)}");
-			text.AppendLine($"Priority player: {PlayerName(state, state.PriorityPlayerId)}");
-			text.AppendLine();
-
-			foreach (PlayerSnapshot player in state.Players)
-			{
-				text.AppendLine($"PLAYER {Value(player.Name)}  id={player.Id}  life={player.Life}");
-				if (player.Id == clientState.Controller?.PlayerId)
-				{
-					AppendCards(text, "  Visible hand", player.HandVisible);
-				}
-				AppendCards(text, "  Battlefield", player.Battlefield);
-				AppendCards(text, "  Graveyard", player.Graveyard);
-				text.AppendLine();
-			}
-
-			text.AppendLine("STACK");
-			if (state.Stack.Count == 0)
-			{
-				text.AppendLine("  (empty)");
-			}
-			foreach (StackSnapshot item in state.Stack)
-			{
-				string source = item.Source == null
-					? Value(item.Text)
-					: $"{CardName(item.Source)} [{item.Source.Id}]";
-				text.AppendLine($"  {source} -> targets: {FormatTargets(item.Targets)}");
-			}
-		}
-
-		text.AppendLine();
-		AppendInteraction(text, clientState.CurrentInteraction);
-		if (clientState.PendingQuery != null)
-		{
-			QueryMessage query = clientState.PendingQuery;
-			text.AppendLine();
-			text.AppendLine($"PENDING QUERY (not answered in G1): {Value(query.Kind)} requestId={Value(query.RequestId)}");
-		}
-		if (!string.IsNullOrWhiteSpace(clientState.LastError))
-		{
-			text.AppendLine();
-			text.AppendLine($"LAST ERROR: {clientState.LastError}");
-		}
-		if (!string.IsNullOrWhiteSpace(clientState.LastNotice))
-		{
-			text.AppendLine($"NOTICE: {clientState.LastNotice}");
-		}
-		stateText.Text = text.ToString();
+		statusLabel = GetNode<Label>("%ConnectionStatus");
+		gameSummary = GetNode<Label>("%GameSummary");
+		opponentHeader = GetNode<Label>("%OpponentHeader");
+		opponentBattlefield = GetNode<FlowContainer>("%OpponentBattlefield");
+		opponentGraveyard = GetNode<FlowContainer>("%OpponentGraveyard");
+		stackText = GetNode<Label>("%StackText");
+		yourHeader = GetNode<Label>("%YourHeader");
+		yourBattlefield = GetNode<FlowContainer>("%YourBattlefield");
+		yourHand = GetNode<FlowContainer>("%YourHand");
+		yourGraveyard = GetNode<FlowContainer>("%YourGraveyard");
+		interactionText = GetNode<Label>("%InteractionText");
+		playerChoices = GetNode<VBoxContainer>("%PlayerChoices");
+		passPriorityButton = GetNode<Button>("%PassPriority");
+		okButton = GetNode<Button>("%OkButton");
+		cancelButton = GetNode<Button>("%CancelButton");
+		actionStatus = GetNode<Label>("%ActionStatus");
+		abilityPanel = GetNode<PanelContainer>("%AbilityPanel");
+		abilityTitle = GetNode<Label>("%AbilityTitle");
+		abilityChoices = GetNode<VBoxContainer>("%AbilityChoices");
 	}
 
-	private static void AppendCards(StringBuilder text, string label, IReadOnlyList<CardSnapshot> cards)
+	private void RenderUi()
 	{
-		text.AppendLine($"{label}:");
+		StateMessage? state = clientState.LatestState;
+		InteractionMessage? interaction = clientState.CurrentInteraction;
+		renderedInteractionSequence = interaction?.InteractionSequence ?? 0;
+		HashSet<int> selectableCards = interaction == null
+			? []
+			: interaction.WeaklySelectableCardIds
+				.Concat(interaction.SelectableCardIds)
+				.ToHashSet();
+
+		PlayerSnapshot? localPlayer = FindLocalPlayer(state);
+		PlayerSnapshot? opponent = state?.Players.FirstOrDefault(player => player.Id != localPlayer?.Id);
+		gameSummary.Text = FormatGameSummary(state);
+		yourHeader.Text = localPlayer == null
+			? "Your player: waiting for controller"
+			: $"You: {Value(localPlayer.Name)}  |  Life {localPlayer.Life}";
+		opponentHeader.Text = opponent == null
+			? "Opponent: waiting for state"
+			: $"Opponent: {Value(opponent.Name)}  |  Life {opponent.Life}";
+
+		RenderCardButtons(opponentBattlefield, opponent?.Battlefield ?? [], selectableCards,
+			interaction?.InteractionSequence);
+		RenderCardButtons(opponentGraveyard, opponent?.Graveyard ?? [], selectableCards,
+			interaction?.InteractionSequence);
+		RenderCardButtons(yourBattlefield, localPlayer?.Battlefield ?? [], selectableCards,
+			interaction?.InteractionSequence);
+		RenderCardButtons(yourHand, localPlayer?.HandVisible ?? [], selectableCards,
+			interaction?.InteractionSequence);
+		RenderCardButtons(yourGraveyard, localPlayer?.Graveyard ?? [], selectableCards,
+			interaction?.InteractionSequence);
+		stackText.Text = FormatStack(state?.Stack ?? []);
+
+		RenderInteraction(interaction, state, localPlayer);
+		RenderPlayerChoices(state, interaction);
+		RenderAbilityQuery(clientState.PendingQuery);
+		actionStatus.Text = clientState.LastActionStatus
+			?? clientState.LastError
+			?? "Choose only controls currently enabled by Forge.";
+	}
+
+	private void RenderCardButtons(Container container, IReadOnlyList<CardSnapshot> cards,
+		HashSet<int> selectableIds, long? interactionSequence)
+	{
+		ClearChildren(container);
 		if (cards.Count == 0)
 		{
-			text.AppendLine("    (empty)");
+			container.AddChild(EmptyLabel());
 			return;
 		}
+
 		foreach (CardSnapshot card in cards)
 		{
-			string tapped = card.Tapped ? " tapped" : string.Empty;
-			text.AppendLine($"    [{card.Id}] {CardName(card)}{tapped}");
+			bool actionable = interactionSequence != null
+				&& selectableIds.Contains(card.Id)
+				&& CanSendAsync();
+			Button button = new()
+			{
+				Text = actionable
+					? $"{CardName(card)}\n#{card.Id}  READY"
+					: $"{CardName(card)}\n#{card.Id}",
+				CustomMinimumSize = new Vector2(150, 52),
+				TooltipText = actionable
+					? $"Forge selectable | {Value(card.Zone)} | id={card.Id}"
+					: $"{Value(card.Zone)} | id={card.Id}",
+				Disabled = !actionable,
+				Modulate = actionable ? new Color(0.72f, 1f, 0.78f) : new Color(0.68f, 0.7f, 0.73f)
+			};
+			button.AddThemeColorOverride("font_color", new Color(0.08f, 0.13f, 0.1f));
+			button.AddThemeColorOverride("font_hover_color", new Color(0.03f, 0.08f, 0.04f));
+			button.AddThemeColorOverride("font_pressed_color", new Color(0.03f, 0.08f, 0.04f));
+			int cardId = card.Id;
+			long sequence = interactionSequence ?? 0;
+			button.Pressed += () => OnCardPressed(card, cardId, sequence);
+			container.AddChild(button);
 		}
 	}
 
-	private static void AppendInteraction(StringBuilder text, InteractionMessage? interaction)
+	private void OnCardPressed(CardSnapshot card, int cardId, long interactionSequence)
 	{
-		text.AppendLine("INTERACTION");
+		GD.Print($"G3 CLICK cardId={cardId} name=\"{Value(card.Name)}\" zone={Value(card.Zone)} "
+			+ $"interactionSequence={interactionSequence} prompt=\"{CurrentPrompt()}\"");
+		SendAsyncCommand(new SelectCardCommand(cardId, interactionSequence));
+	}
+
+	private void RenderInteraction(InteractionMessage? interaction, StateMessage? state,
+		PlayerSnapshot? localPlayer)
+	{
 		if (interaction == null)
 		{
-			text.AppendLine("  Waiting for interaction...");
+			interactionText.Text = "Waiting for Forge interaction...";
+			passPriorityButton.Disabled = true;
+			okButton.Disabled = true;
+			cancelButton.Disabled = true;
 			return;
 		}
-		text.AppendLine($"  sequence={interaction.InteractionSequence} reason={Value(interaction.Reason)}");
-		text.AppendLine($"  prompt={Value(interaction.Prompt)}");
-		text.AppendLine($"  weaklySelectable=[{string.Join(", ", interaction.WeaklySelectableCardIds)}]");
-		text.AppendLine($"  selectable=[{string.Join(", ", interaction.SelectableCardIds)}]");
-		text.AppendLine($"  selectablePlayers=[{string.Join(", ", interaction.SelectablePlayerIds)}]");
-		text.AppendLine($"  OK: {Value(interaction.Buttons.OkLabel)} enabled={interaction.Buttons.OkEnabled}");
-		text.AppendLine($"  Cancel: {Value(interaction.Buttons.CancelLabel)} enabled={interaction.Buttons.CancelEnabled}");
+
+		interactionText.Text = $"Interaction {interaction.InteractionSequence} ({Value(interaction.Reason)})\n"
+			+ $"{Value(interaction.Prompt)}\n"
+			+ $"Selectable cards: [{string.Join(", ", interaction.SelectableCardIds)}]  "
+			+ $"Weak: [{string.Join(", ", interaction.WeaklySelectableCardIds)}]";
+		bool canSend = CanSendAsync();
+		okButton.Text = Value(interaction.Buttons.OkLabel);
+		cancelButton.Text = Value(interaction.Buttons.CancelLabel);
+		okButton.Disabled = !canSend || !interaction.Buttons.OkEnabled;
+		cancelButton.Disabled = !canSend || !interaction.Buttons.CancelEnabled;
+		passPriorityButton.Disabled = !canSend || localPlayer == null
+			|| state?.PriorityPlayerId != localPlayer.Id
+			|| !string.Equals(interaction.Reason, "buttons", StringComparison.Ordinal);
+	}
+
+	private void RenderPlayerChoices(StateMessage? state, InteractionMessage? interaction)
+	{
+		ClearChildren(playerChoices);
+		if (state == null || interaction == null || interaction.SelectablePlayerIds.Count == 0)
+		{
+			playerChoices.Visible = false;
+			return;
+		}
+
+		playerChoices.Visible = true;
+		foreach (int playerId in interaction.SelectablePlayerIds)
+		{
+			PlayerSnapshot? player = state.Players.FirstOrDefault(candidate => candidate.Id == playerId);
+			Button button = new()
+			{
+				Text = $"Select player: {Value(player?.Name)} [#{playerId}]",
+				Disabled = !CanSendAsync()
+			};
+			long sequence = interaction.InteractionSequence;
+			button.Pressed += () => SendAsyncCommand(new SelectPlayerCommand(playerId, sequence));
+			playerChoices.AddChild(button);
+		}
+	}
+
+	private void RenderAbilityQuery(QueryMessage? query)
+	{
+		ClearChildren(abilityChoices);
+		abilityPanel.Visible = query != null;
+		if (query == null)
+		{
+			return;
+		}
+
+		abilityTitle.Text = $"Forge requires a choice: {Value(query.Kind)}\n"
+			+ $"{Value(query.HostCardName)}  requestId={Value(query.RequestId)}";
+		if (query.Choices.Count == 0)
+		{
+			Label unsupported = EmptyLabel("No reply choices were supplied; G3 will not invent a response.");
+			unsupported.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+			abilityChoices.AddChild(unsupported);
+			return;
+		}
+
+		foreach (QueryChoice choice in query.Choices)
+		{
+			Button button = new()
+			{
+				Text = $"{Value(choice.Description)}  [#{choice.Id}]",
+				Disabled = !choice.CanPlay,
+				TooltipText = choice.CanPlay ? "Reply with this offered ability" : "Forge reports this ability cannot play"
+			};
+			string requestId = query.RequestId ?? string.Empty;
+			int selectedId = choice.Id;
+			button.Pressed += () => SendReply(requestId, selectedId);
+			abilityChoices.AddChild(button);
+		}
+	}
+
+	private void OnPassPriority()
+	{
+		if (renderedInteractionSequence > 0)
+		{
+			GD.Print($"G3 PASS_PRIORITY interactionSequence={renderedInteractionSequence} "
+				+ $"prompt=\"{CurrentPrompt()}\"");
+			SendAsyncCommand(new PassPriorityCommand(renderedInteractionSequence));
+		}
+	}
+
+	private void OnButton(BridgeButton button)
+	{
+		if (renderedInteractionSequence > 0)
+		{
+			SendAsyncCommand(new ButtonCommand(button, renderedInteractionSequence));
+		}
+	}
+
+	private void SendAsyncCommand(AsyncInteractionCommand command)
+	{
+		if (command.InteractionSequence != renderedInteractionSequence)
+		{
+			actionStatus.Text = "Interaction changed before the click was sent. Choose again.";
+			return;
+		}
+		SendCommand(command);
+	}
+
+	private void SendReply(string requestId, int selectedId)
+	{
+		QueryMessage? query = clientState.PendingQuery;
+		if (query == null || query.RequestId != requestId
+			|| query.Choices.All(choice => choice.Id != selectedId))
+		{
+			actionStatus.Text = "That query is no longer pending. Choose from the current query.";
+			return;
+		}
+		QueryChoice? choice = query.Choices.FirstOrDefault(candidate => candidate.Id == selectedId);
+		GD.Print($"G3 QUERY_REPLY requestId={requestId} selectedId={selectedId} "
+			+ $"description=\"{Value(choice?.Description)}\"");
+		SendCommand(new ReplyCommand(requestId, selectedId));
+	}
+
+	private void SendCommand(BridgeCommand command)
+	{
+		string? error = null;
+		if (bridge == null || !bridge.TrySend(command, out error))
+		{
+			actionStatus.Text = error ?? "Could not send command to forge-bridge.";
+			return;
+		}
+		clientState.RecordCommandSent(command);
+		GD.Print($"G2_COMMAND_SENT type={command.Type}");
+		RenderUi();
+	}
+
+	private bool CanSendAsync()
+	{
+		return bridge?.IsRunning == true
+			&& clientState.PendingAsyncCommand == null
+			&& clientState.PendingQuery == null;
+	}
+
+	private string CurrentPrompt()
+	{
+		return Value(clientState.CurrentInteraction?.Prompt).Replace('"', '\'');
+	}
+
+	private PlayerSnapshot? FindLocalPlayer(StateMessage? state)
+	{
+		int? playerId = clientState.Controller?.PlayerId;
+		return state == null || playerId == null
+			? null
+			: state.Players.FirstOrDefault(player => player.Id == playerId.Value);
+	}
+
+	private string FormatGameSummary(StateMessage? state)
+	{
+		return state == null
+			? "Waiting for authoritative game state..."
+			: $"Turn {state.Turn}  |  Phase {Value(state.Phase)}  |  "
+				+ $"Active {PlayerName(state, state.ActivePlayerId)}  |  "
+				+ $"Priority {PlayerName(state, state.PriorityPlayerId)}  |  State {state.StateSequence}";
+	}
+
+	private static string FormatStack(IReadOnlyList<StackSnapshot> stack)
+	{
+		if (stack.Count == 0)
+		{
+			return "(empty)";
+		}
+		StringBuilder text = new();
+		foreach (StackSnapshot item in stack)
+		{
+			string source = item.Source == null
+				? Value(item.Text)
+				: $"{CardName(item.Source)} [#{item.Source.Id}]";
+			string targets = item.Targets.Count == 0
+				? "none"
+				: string.Join(", ", item.Targets.Select(target => $"{CardName(target)} [#{target.Id}]"));
+			text.AppendLine($"{source} -> {targets}");
+		}
+		return text.ToString().TrimEnd();
+	}
+
+	private static void ClearChildren(Node parent)
+	{
+		foreach (Node child in parent.GetChildren())
+		{
+			child.QueueFree();
+		}
+	}
+
+	private static Label EmptyLabel(string text = "(empty)")
+	{
+		return new Label { Text = text, Modulate = new Color(0.62f, 0.65f, 0.68f) };
 	}
 
 	private static string PlayerName(StateMessage state, int? id)
@@ -200,14 +436,7 @@ public partial class Main : Control
 			return "-";
 		}
 		PlayerSnapshot? player = state.Players.FirstOrDefault(candidate => candidate.Id == id.Value);
-		return player == null ? $"id={id}" : $"{Value(player.Name)} [{id}]";
-	}
-
-	private static string FormatTargets(IReadOnlyList<CardSnapshot> targets)
-	{
-		return targets.Count == 0
-			? "[]"
-			: $"[{string.Join(", ", targets.Select(target => $"{CardName(target)} [{target.Id}]"))}]";
+		return player == null ? $"#{id}" : Value(player.Name);
 	}
 
 	private static string CardName(CardSnapshot card)
@@ -232,7 +461,7 @@ public partial class Main : Control
 		switch (message)
 		{
 			case QueryMessage query:
-				GD.PushWarning($"Bridge query {query.RequestId} ({query.Kind}) is pending; G1 will not answer it.");
+				GD.PushWarning($"Bridge query {query.RequestId} ({query.Kind}) requires a human choice.");
 				break;
 			case ErrorMessage error:
 				GD.PushError($"Bridge error {error.Code}: {error.Message}");
@@ -244,6 +473,107 @@ public partial class Main : Control
 				GD.PushWarning($"Unknown bridge message type '{unknown.UnknownType}'.");
 				break;
 		}
+	}
+
+	private void LogG3Observation(BridgeMessage message)
+	{
+		if (message is QueryMessage query)
+		{
+			string choices = string.Join(" | ", query.Choices.Select(choice =>
+				$"{choice.Id}:{Value(choice.Description)} canPlay={choice.CanPlay}"));
+			GD.Print($"G3 QUERY kind={Value(query.Kind)} requestId={Value(query.RequestId)} "
+				+ $"hostCardId={query.HostCardId?.ToString() ?? "-"} "
+				+ $"hostCard=\"{Value(query.HostCardName)}\" choices=[{choices}]");
+		}
+		else if (message is StateMessage state)
+		{
+			LogG3StateTransitions(state);
+		}
+	}
+
+	private void LogG3StateTransitions(StateMessage state)
+	{
+		Dictionary<int, ObservedCardLocation> currentCards = new();
+		foreach (PlayerSnapshot player in state.Players)
+		{
+			IndexCards(currentCards, player, player.HandVisible, "Hand");
+			IndexCards(currentCards, player, player.Battlefield, "Battlefield");
+			IndexCards(currentCards, player, player.Graveyard, "Graveyard");
+		}
+
+		Dictionary<int, ObservedStackItem> currentStack = state.Stack.ToDictionary(
+			item => item.Id,
+			item => new ObservedStackItem(
+				item.Id,
+				item.Source?.Id,
+				item.Source == null ? Value(item.Text) : CardName(item.Source),
+				item.Targets.Select(target => new ObservedTarget(target.Id, CardName(target))).ToArray()));
+
+		if (g3StateInitialized)
+		{
+			foreach ((int id, ObservedCardLocation current) in currentCards)
+			{
+				if (observedCardLocations.TryGetValue(id, out ObservedCardLocation? previous)
+					&& previous.Zone != current.Zone)
+				{
+					GD.Print($"G3 ZONE cardId={id} name=\"{current.Name}\" owner=\"{current.Owner}\" "
+						+ $"from={previous.Zone} to={current.Zone} stateSequence={state.StateSequence}");
+				}
+			}
+
+			foreach ((int id, ObservedStackItem stackItem) in currentStack)
+			{
+				if (!observedStack.ContainsKey(id))
+				{
+					GD.Print($"G3 STACK observed stackId={id} sourceId={stackItem.SourceId?.ToString() ?? "-"} "
+						+ $"source=\"{stackItem.SourceName}\" targets=[{FormatTargets(stackItem.Targets)}] "
+						+ $"stateSequence={state.StateSequence}");
+				}
+			}
+
+			foreach ((int id, ObservedStackItem previous) in observedStack)
+			{
+				if (currentStack.ContainsKey(id))
+				{
+					continue;
+				}
+				string targetZones = string.Join(", ", previous.Targets.Select(target =>
+				{
+					string zone = currentCards.TryGetValue(target.Id, out ObservedCardLocation? location)
+						? location.Zone
+						: "notInProjectedZones";
+					return $"{target.Id}:{target.Name} zone={zone}";
+				}));
+				GD.Print($"G3 RESOLUTION stackId={id} source=\"{previous.SourceName}\" "
+					+ $"stackPresent=false targets=[{targetZones}] stateSequence={state.StateSequence}");
+			}
+		}
+
+		foreach ((int id, ObservedCardLocation location) in currentCards)
+		{
+			observedCardLocations[id] = location;
+		}
+		observedStack.Clear();
+		foreach ((int id, ObservedStackItem item) in currentStack)
+		{
+			observedStack[id] = item;
+		}
+		g3StateInitialized = true;
+	}
+
+	private static void IndexCards(Dictionary<int, ObservedCardLocation> destination,
+		PlayerSnapshot player, IEnumerable<CardSnapshot> cards, string zone)
+	{
+		foreach (CardSnapshot card in cards)
+		{
+			destination[card.Id] = new ObservedCardLocation(
+				card.Id, CardName(card), Value(player.Name), zone);
+		}
+	}
+
+	private static string FormatTargets(IEnumerable<ObservedTarget> targets)
+	{
+		return string.Join(", ", targets.Select(target => $"{target.Id}:{target.Name}"));
 	}
 
 	private void LogFirstObservation(BridgeMessage message)
@@ -259,4 +589,9 @@ public partial class Main : Control
 			GD.Print($"G1_INTERACTION_OBSERVED sequence={interaction.InteractionSequence} reason={Value(interaction.Reason)}");
 		}
 	}
+
+	private sealed record ObservedCardLocation(int Id, string Name, string Owner, string Zone);
+	private sealed record ObservedTarget(int Id, string Name);
+	private sealed record ObservedStackItem(
+		int Id, int? SourceId, string SourceName, IReadOnlyList<ObservedTarget> Targets);
 }
