@@ -175,6 +175,11 @@ public final class BridgeGuiGame extends NetworkGuiGame {
     }
 
     void handleCommand(BridgeProtocol.Command command) {
+        if (command.interactionSequence() != protocol.currentInteractionSequence()
+                || protocol.currentInteractionSequence() == 0) {
+            protocol.staleInteraction(command.interactionSequence());
+            return;
+        }
         if (gameController == null) {
             protocol.error("controllerUnavailable", "Forge has not provided a game controller yet", null);
             return;
@@ -190,7 +195,7 @@ public final class BridgeGuiGame extends NetworkGuiGame {
                 return;
             }
             gameController.selectCard(card, null, null);
-            protocol.actionAccepted("selectCard", card.getId());
+            protocol.actionAccepted("selectCard", card.getId(), command.interactionSequence());
             break;
         case SELECT_PLAYER:
             PlayerView player = selectablePlayers.get(command.selectedId());
@@ -199,7 +204,7 @@ public final class BridgeGuiGame extends NetworkGuiGame {
                 return;
             }
             gameController.selectPlayer(player, null);
-            protocol.actionAccepted("selectPlayer", player.getId());
+            protocol.actionAccepted("selectPlayer", player.getId(), command.interactionSequence());
             break;
         case BUTTON:
             if ("ok".equals(command.button())) {
@@ -215,11 +220,11 @@ public final class BridgeGuiGame extends NetworkGuiGame {
                 }
                 gameController.selectButtonCancel();
             }
-            protocol.actionAccepted("button:" + command.button(), null);
+            protocol.actionAccepted("button:" + command.button(), null, command.interactionSequence());
             break;
         case PASS_PRIORITY:
             gameController.passPriority();
-            protocol.actionAccepted("passPriority", null);
+            protocol.actionAccepted("passPriority", null, command.interactionSequence());
             break;
         default:
             protocol.error("unsupportedAction", "Unsupported action command", null);

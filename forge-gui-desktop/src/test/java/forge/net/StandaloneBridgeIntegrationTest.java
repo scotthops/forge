@@ -96,12 +96,19 @@ public class StandaloneBridgeIntegrationTest {
             List<JsonObject> messages = parseJsonLines(captured);
             Assert.assertEquals(bridge.exitValue(), 0,
                     "Bridge process failed. JSONL:\n" + captured + "\nDiagnostics:\n" + diagnostics);
+            Assert.assertTrue(messages.stream().allMatch(message -> message.has("schemaVersion")
+                            && message.get("schemaVersion").getAsInt() == 1),
+                    "Every bridge message must use schemaVersion 1:\n" + captured);
             Assert.assertTrue(hasType(messages, "controller"), captured);
             Assert.assertTrue(captured.contains("\"implementation\":\"forge.gamemodes.net.client.NetGameController\""), captured);
             Assert.assertTrue(hasType(messages, "state"), captured);
             Assert.assertTrue(captured.contains("\"source\":\"full\"")
                     || captured.contains("\"source\":\"delta\""), captured);
             Assert.assertTrue(hasType(messages, "interaction"), captured);
+            Assert.assertTrue(messages.stream().filter(message -> "interaction".equals(
+                            message.get("type").getAsString()))
+                            .allMatch(message -> message.has("interactionSequence")),
+                    "Interaction message is missing interactionSequence:\n" + captured);
             Assert.assertTrue(captured.contains("\"event\":\"proofComplete\""), captured);
             assertOpponentHandsHidden(messages, captured);
         } finally {

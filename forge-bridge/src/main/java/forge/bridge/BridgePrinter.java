@@ -14,7 +14,6 @@ import java.util.List;
 final class BridgePrinter {
     private final BridgeProtocol protocol;
     private InteractionSnapshot interaction = InteractionSnapshot.empty();
-    private long interactionSequence;
 
     BridgePrinter(BridgeProtocol protocol) {
         this.protocol = protocol;
@@ -67,7 +66,7 @@ final class BridgePrinter {
     private void printInteraction(String reason) {
         protocol.send(new InteractionMessage(
                 "interaction",
-                ++interactionSequence,
+                protocol.nextInteractionSequence(),
                 reason,
                 interaction.prompt(),
                 interaction.weaklySelectableCardIds(),
@@ -167,7 +166,7 @@ final class BridgePrinter {
     private record ControllerMessage(String type, Integer playerId, String playerName,
                                      String controllerInterface, String implementation) { }
 
-    private record StateMessage(String type, String source, long sequence, int turn, String phase,
+    private record StateMessage(String type, String source, long stateSequence, int turn, String phase,
                                 Integer activePlayerId, Integer priorityPlayerId,
                                 List<PlayerSnapshot> players, List<StackSnapshot> stack) { }
 
@@ -181,7 +180,7 @@ final class BridgePrinter {
     private record StackSnapshot(int id, String text, CardSnapshot source,
                                  List<CardSnapshot> targets) { }
 
-    private record InteractionMessage(String type, long sequence, String reason, String prompt,
+    private record InteractionMessage(String type, long interactionSequence, String reason, String prompt,
                                       List<Integer> weaklySelectableCardIds,
                                       List<Integer> selectableCardIds,
                                       List<Integer> selectablePlayerIds,

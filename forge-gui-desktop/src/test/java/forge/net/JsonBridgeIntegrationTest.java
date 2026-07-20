@@ -166,19 +166,43 @@ public class JsonBridgeIntegrationTest {
 
     private static void assertProtocolProof(List<JsonObject> output, List<JsonObject> commands,
             String driverDiagnostics) {
+        Assert.assertTrue(output.stream().allMatch(message -> integer(message, "schemaVersion", -1) == 1),
+                "Every bridge output must use schemaVersion 1");
+        Assert.assertEquals(commands.stream().filter(message -> !message.has("schemaVersion")).count(), 1,
+                "Driver should send exactly one missing-version probe");
+        Assert.assertEquals(commands.stream()
+                .filter(message -> integer(message, "schemaVersion", -1) == 999).count(), 1,
+                "Driver should send exactly one unsupported-version probe");
+        Assert.assertTrue(commands.stream()
+                .filter(message -> message.has("schemaVersion"))
+                .allMatch(message -> integer(message, "schemaVersion", -1) == 1
+                        || integer(message, "schemaVersion", -1) == 999),
+                "Driver emitted an unexpected schema version");
         Assert.assertTrue(hasType(output, "controller"), "No controller message");
         Assert.assertTrue(hasType(output, "state"), "No state message");
         Assert.assertTrue(hasType(output, "interaction"), "No interaction message");
-        Assert.assertFalse(hasType(output, "error"), "Bridge emitted protocol error");
+        Assert.assertTrue(output.stream().filter(message -> "state".equals(type(message)))
+                .allMatch(message -> message.has("stateSequence")), "State is missing stateSequence");
+        assertInteractionSequencesIncrease(output);
+        assertExpectedHardeningErrors(output);
 
+        int mountainId = findCardId(output, "Bob (JSON Driver)", "handVisible", "Mountain");
         int boltId = findCardId(output, "Bob (JSON Driver)", "handVisible", "Lightning Bolt");
         int elvesId = findCardId(output, "Alice (Host AI)", "battlefield", "Llanowar Elves");
+        Assert.assertTrue(mountainId >= 0, "Mountain was never visible in Bob's hand");
         Assert.assertTrue(boltId >= 0, "Lightning Bolt was never visible in Bob's hand");
         Assert.assertTrue(elvesId >= 0, "Llanowar Elves was never on Alice's battlefield");
+        assertStaleCardLeftStateUnchanged(output, mountainId);
         Assert.assertTrue(hasSelection(commands, boltId), "Driver did not explicitly select Lightning Bolt");
         Assert.assertTrue(hasSelection(commands, elvesId), "Driver did not explicitly select Llanowar Elves");
         Assert.assertTrue(commands.stream().anyMatch(message -> "passPriority".equals(type(message))),
                 "Driver did not pass priority");
+        Assert.assertEquals(output.stream()
+                        .filter(message -> "actionAccepted".equals(type(message)))
+                        .filter(message -> "selectCard".equals(string(message, "action")))
+                        .filter(message -> integer(message, "selectedId", -1) == mountainId)
+                        .count(),
+                2, "Only the valid land-play and mana-payment Mountain actions may reach Forge");
 
         JsonObject query = output.stream()
                 .filter(message -> "query".equals(type(message)))
@@ -197,6 +221,43 @@ public class JsonBridgeIntegrationTest {
         Assert.assertTrue(driverDiagnostics.contains("DRIVER_SUCCESS")
                         && driverDiagnostics.contains("abilityReply=true"),
                 driverDiagnostics);
+    }
+
+    private static void assertExpectedHardeningErrors(List<JsonObject> output) {
+        List<JsonObject> errors = output.stream()
+                .filter(message -> "error".equals(type(message))).toList();
+        Assert.assertTrue(errors.stream().allMatch(message -> {
+            String code = string(message, "code");
+            return "MISSING_SCHEMA_VERSION".equals(code)
+                    || "UNSUPPORTED_SCHEMA_VERSION".equals(code)
+                    || "STALE_INTERACTION".equals(code);
+        }), "Unexpected bridge errors: " + errors);
+        Assert.assertEquals(errorCount(errors, "MISSING_SCHEMA_VERSION"), 1, errors.toString());
+        Assert.assertEquals(errorCount(errors, "UNSUPPORTED_SCHEMA_VERSION"), 1, errors.toString());
+        Assert.assertTrue(errorCount(errors, "STALE_INTERACTION") >= 1, errors.toString());
+        JsonObject stale = errors.stream()
+                .filter(message -> "STALE_INTERACTION".equals(string(message, "code")))
+                .findFirst().orElseThrow();
+        Assert.assertTrue(stale.has("receivedInteractionSequence"), stale.toString());
+        Assert.assertTrue(stale.has("currentInteractionSequence"), stale.toString());
+    }
+
+    private static long errorCount(List<JsonObject> errors, String code) {
+        return errors.stream().filter(message -> code.equals(string(message, "code"))).count();
+    }
+
+    private static void assertInteractionSequencesIncrease(List<JsonObject> output) {
+        long previous = 0;
+        for (JsonObject message : output) {
+            if (!"interaction".equals(type(message))) {
+                continue;
+            }
+            long current = message.get("interactionSequence").getAsLong();
+            Assert.assertTrue(current > previous,
+                    "interactionSequence must strictly increase: " + previous + " then " + current);
+            previous = current;
+        }
+        Assert.assertTrue(previous > 0, "No interaction sequence was observed");
     }
 
     private static int findCardId(List<JsonObject> messages, String playerName, String zone, String cardName) {
@@ -223,6 +284,46 @@ public class JsonBridgeIntegrationTest {
     private static boolean hasSelection(List<JsonObject> messages, int cardId) {
         return messages.stream().anyMatch(message -> "selectCard".equals(type(message))
                 && message.has("cardId") && message.get("cardId").getAsInt() == cardId);
+    }
+
+    private static void assertStaleCardLeftStateUnchanged(List<JsonObject> output, int mountainId) {
+        int unsupportedIndex = -1;
+        int staleIndex = -1;
+        JsonObject precedingState = null;
+        for (int i = 0; i < output.size(); i++) {
+            JsonObject message = output.get(i);
+            if ("state".equals(type(message))) {
+                precedingState = message;
+            } else if ("UNSUPPORTED_SCHEMA_VERSION".equals(string(message, "code"))) {
+                unsupportedIndex = i;
+            } else if (unsupportedIndex >= 0 && "STALE_INTERACTION".equals(string(message, "code"))) {
+                staleIndex = i;
+                break;
+            }
+        }
+        Assert.assertTrue(staleIndex > unsupportedIndex, "Deliberate stale-card rejection was not observed");
+        Assert.assertNotNull(precedingState, "No authoritative state preceded stale-card rejection");
+        JsonObject bob = playerNamed(precedingState, "Bob (JSON Driver)");
+        Assert.assertNotNull(bob, "Bob was absent from the state preceding stale-card rejection");
+        Assert.assertTrue(containsCard(bob.getAsJsonArray("handVisible"), mountainId),
+                "Rejected Mountain action changed the latest authoritative hand state");
+        Assert.assertFalse(containsCard(bob.getAsJsonArray("battlefield"), mountainId),
+                "Rejected Mountain action changed the latest authoritative battlefield state");
+        Assert.assertTrue(output.subList(staleIndex + 1, output.size()).stream()
+                        .anyMatch(message -> "actionAccepted".equals(type(message))
+                                && "selectCard".equals(string(message, "action"))
+                                && integer(message, "selectedId", -1) == mountainId),
+                "No later current-sequence Mountain action was accepted");
+    }
+
+    private static JsonObject playerNamed(JsonObject state, String name) {
+        for (JsonElement playerElement : state.getAsJsonArray("players")) {
+            JsonObject player = playerElement.getAsJsonObject();
+            if (name.equals(string(player, "name"))) {
+                return player;
+            }
+        }
+        return null;
     }
 
     private static boolean sawStackTarget(List<JsonObject> messages, int boltId, int elvesId) {
@@ -330,6 +431,11 @@ public class JsonBridgeIntegrationTest {
     private static String string(JsonObject object, String field) {
         JsonElement value = object.get(field);
         return value == null || value.isJsonNull() ? null : value.getAsString();
+    }
+
+    private static int integer(JsonObject object, String field, int fallback) {
+        JsonElement value = object.get(field);
+        return value == null || value.isJsonNull() ? fallback : value.getAsInt();
     }
 
     private static synchronized void append(StringBuilder target, String value) {

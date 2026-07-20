@@ -15,6 +15,8 @@ import java.util.Set;
 
 /** A Forge-independent JSONL client used only by the Spike E process test. */
 public final class ExternalJsonDriverMain {
+    private static final int SCHEMA_VERSION = 1;
+
     private enum Stage {
         PREPARE_LAND,
         WAIT_LAND,
@@ -37,6 +39,9 @@ public final class ExternalJsonDriverMain {
     private int mountainId = -1;
     private boolean abilityReplied;
     private boolean landAbilityReplied;
+    private boolean hardeningProbesSent;
+    private boolean stackReadyToPass;
+    private JsonObject pendingAsyncCommand;
 
     private ExternalJsonDriverMain() {
     }
@@ -52,6 +57,10 @@ public final class ExternalJsonDriverMain {
             String line;
             while ((line = input.readLine()) != null) {
                 JsonObject message = JsonParser.parseString(line).getAsJsonObject();
+                if (integer(message, "schemaVersion", -1) != SCHEMA_VERSION) {
+                    System.err.println("DRIVER_FAILURE unsupported bridge schema: " + line);
+                    return false;
+                }
                 String type = string(message, "type");
                 if ("state".equals(type)) {
                     state = message;
@@ -68,7 +77,9 @@ public final class ExternalJsonDriverMain {
                 } else if ("query".equals(type)) {
                     handleQuery(message);
                 } else if ("error".equals(type)) {
-                    System.err.println("DRIVER_BRIDGE_ERROR " + line);
+                    handleError(message, line);
+                } else if ("actionAccepted".equals(type)) {
+                    handleActionAccepted(message);
                 }
             }
         }
@@ -108,38 +119,50 @@ public final class ExternalJsonDriverMain {
     }
 
     private void handleInteraction(JsonObject interaction) {
-        long sequence = interaction.get("sequence").getAsLong();
+        long sequence = interaction.get("interactionSequence").getAsLong();
         if (!actedInteractions.add(sequence)) {
             return;
         }
 
         JsonArray playerIds = interaction.getAsJsonArray("selectablePlayerIds");
         if (bobId >= 0 && contains(playerIds, bobId)) {
-            send(commandWithId("selectPlayer", "playerId", bobId));
+            sendTracked(commandWithId("selectPlayer", "playerId", bobId, sequence));
             return;
         }
 
         JsonArray weak = interaction.getAsJsonArray("weaklySelectableCardIds");
-        if (stage == Stage.PREPARE_LAND && localMainOnePriority() && contains(weak, mountainId)) {
-            send(commandWithId("selectCard", "cardId", mountainId));
+        boolean actionableSnapshot = "buttons".equals(string(interaction, "reason"));
+        if (stage == Stage.PREPARE_LAND && actionableSnapshot
+                && localMainOnePriority() && contains(weak, mountainId)) {
+            sendHardeningProbes(mountainId, sequence);
+            sendTracked(commandWithId("selectCard", "cardId", mountainId, sequence));
             stage = Stage.WAIT_LAND;
             return;
         }
-        if (stage == Stage.WAIT_BOLT && readyToCast() && contains(weak, boltId)) {
-            send(commandWithId("selectCard", "cardId", boltId));
+        if (stage == Stage.WAIT_BOLT && actionableSnapshot && readyToCast() && contains(weak, boltId)) {
+            sendTracked(commandWithId("selectCard", "cardId", boltId, sequence));
             stage = Stage.WAIT_ABILITY;
             return;
         }
-        if (stage == Stage.WAIT_MANA && contains(weak, mountainId)) {
-            send(commandWithId("selectCard", "cardId", mountainId));
+        if (stage == Stage.WAIT_MANA && actionableSnapshot && contains(weak, mountainId)) {
+            sendTracked(commandWithId("selectCard", "cardId", mountainId, sequence));
             stage = Stage.WAIT_STACK;
             return;
         }
 
         JsonArray selectable = interaction.getAsJsonArray("selectableCardIds");
-        if (stage == Stage.WAIT_TARGET && contains(selectable, elvesId)) {
-            send(commandWithId("selectCard", "cardId", elvesId));
+        if (stage == Stage.WAIT_TARGET && actionableSnapshot && contains(selectable, elvesId)) {
+            sendTracked(commandWithId("selectCard", "cardId", elvesId, sequence));
             stage = Stage.WAIT_MANA;
+            return;
+        }
+
+        if (stage == Stage.WAIT_STACK && stackReadyToPass && actionableSnapshot) {
+            JsonObject command = new JsonObject();
+            command.addProperty("type", "passPriority");
+            command.addProperty("interactionSequence", sequence);
+            sendTracked(command);
+            stage = Stage.WAIT_RESOLUTION;
             return;
         }
 
@@ -149,7 +172,31 @@ public final class ExternalJsonDriverMain {
             JsonObject command = new JsonObject();
             command.addProperty("type", "button");
             command.addProperty("button", "ok");
-            send(command);
+            command.addProperty("interactionSequence", sequence);
+            sendTracked(command);
+        }
+    }
+
+    private void handleError(JsonObject error, String line) {
+        System.err.println("DRIVER_BRIDGE_ERROR " + line);
+        if (!"STALE_INTERACTION".equals(string(error, "code")) || pendingAsyncCommand == null) {
+            return;
+        }
+        long received = error.get("receivedInteractionSequence").getAsLong();
+        long pending = pendingAsyncCommand.get("interactionSequence").getAsLong();
+        if (received != pending) {
+            return;
+        }
+        pendingAsyncCommand.addProperty("interactionSequence",
+                error.get("currentInteractionSequence").getAsLong());
+        send(pendingAsyncCommand.deepCopy());
+    }
+
+    private void handleActionAccepted(JsonObject accepted) {
+        if (pendingAsyncCommand != null
+                && accepted.get("interactionSequence").getAsLong()
+                == pendingAsyncCommand.get("interactionSequence").getAsLong()) {
+            pendingAsyncCommand = null;
         }
     }
 
@@ -205,10 +252,7 @@ public final class ExternalJsonDriverMain {
             JsonObject source = item.getAsJsonObject("source");
             if (source != null && "Lightning Bolt".equals(string(source, "name"))
                     && cardNamed(item.getAsJsonArray("targets"), "Llanowar Elves") != null) {
-                JsonObject command = new JsonObject();
-                command.addProperty("type", "passPriority");
-                send(command);
-                stage = Stage.WAIT_RESOLUTION;
+                stackReadyToPass = true;
                 return;
             }
         }
@@ -295,14 +339,45 @@ public final class ExternalJsonDriverMain {
         return false;
     }
 
-    private static JsonObject commandWithId(String type, String field, int id) {
+    private void sendHardeningProbes(int cardId, long sequence) {
+        if (hardeningProbesSent) {
+            return;
+        }
+        JsonObject missingVersion = commandWithId("selectCard", "cardId", cardId, sequence);
+        sendWithoutVersion(missingVersion);
+
+        JsonObject unsupportedVersion = commandWithId("selectCard", "cardId", cardId, sequence);
+        unsupportedVersion.addProperty("schemaVersion", 999);
+        send(unsupportedVersion);
+
+        JsonObject stale = commandWithId("selectCard", "cardId", cardId, sequence - 1);
+        send(stale);
+        hardeningProbesSent = true;
+    }
+
+    private static JsonObject commandWithId(String type, String field, int id, long interactionSequence) {
         JsonObject command = new JsonObject();
         command.addProperty("type", type);
         command.addProperty(field, id);
+        command.addProperty("interactionSequence", interactionSequence);
         return command;
     }
 
     private void send(JsonObject command) {
+        if (!command.has("schemaVersion")) {
+            command.addProperty("schemaVersion", SCHEMA_VERSION);
+        }
+        String line = gson.toJson(command);
+        System.err.println("DRIVER_ACTION " + line);
+        output.println(line);
+    }
+
+    private void sendTracked(JsonObject command) {
+        pendingAsyncCommand = command.deepCopy();
+        send(command);
+    }
+
+    private void sendWithoutVersion(JsonObject command) {
         String line = gson.toJson(command);
         System.err.println("DRIVER_ACTION " + line);
         output.println(line);

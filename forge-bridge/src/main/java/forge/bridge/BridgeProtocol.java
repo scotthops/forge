@@ -1,5 +1,6 @@
 package forge.bridge;
 
+import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import forge.game.card.CardView;
@@ -17,6 +18,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 final class BridgeProtocol implements AutoCloseable {
+    static final int SCHEMA_VERSION = 1;
     private static final long QUERY_TIMEOUT_SECONDS = 30;
 
     enum CommandType {
@@ -26,11 +28,13 @@ final class BridgeProtocol implements AutoCloseable {
         PASS_PRIORITY
     }
 
-    record Command(CommandType type, Integer selectedId, String button) { }
+    record Command(CommandType type, Integer selectedId, String button, long interactionSequence) { }
 
     private final JsonLineTransport transport;
     private final BridgeGuiBase guiBase;
+    private final Gson gson = new Gson();
     private final AtomicLong requestIds = new AtomicLong();
+    private final AtomicLong interactionSequences = new AtomicLong();
     private final Map<String, PendingAbilityQuery> pendingAbilityQueries = new ConcurrentHashMap<>();
     private Consumer<Command> actionHandler;
 
@@ -46,19 +50,35 @@ final class BridgeProtocol implements AutoCloseable {
     }
 
     void send(Object message) {
-        transport.send(message);
+        JsonObject envelope = gson.toJsonTree(message).getAsJsonObject();
+        envelope.addProperty("schemaVersion", SCHEMA_VERSION);
+        transport.send(envelope);
     }
 
     void lifecycle(String event, String detail) {
         send(new LifecycleMessage("lifecycle", event, detail));
     }
 
-    void actionAccepted(String action, Integer selectedId) {
-        send(new ActionMessage("actionAccepted", action, selectedId));
+    void actionAccepted(String action, Integer selectedId, long interactionSequence) {
+        send(new ActionMessage("actionAccepted", action, selectedId, interactionSequence));
     }
 
     void error(String code, String message, String requestId) {
-        send(new ErrorMessage("error", code, message, requestId));
+        send(new ErrorMessage("error", code, message, requestId, null, null, null, null));
+    }
+
+    void staleInteraction(long receivedSequence) {
+        send(new ErrorMessage("error", "STALE_INTERACTION",
+                "Async action does not match the current interaction context", null,
+                receivedSequence, currentInteractionSequence(), null, null));
+    }
+
+    long nextInteractionSequence() {
+        return interactionSequences.incrementAndGet();
+    }
+
+    long currentInteractionSequence() {
+        return interactionSequences.get();
     }
 
     SpellAbilityView queryAbility(CardView hostCard, List<SpellAbilityView> offered) {
@@ -99,6 +119,19 @@ final class BridgeProtocol implements AutoCloseable {
     }
 
     private void handleInput(JsonObject input) {
+        Long receivedSchemaVersion = longField(input, "schemaVersion");
+        if (receivedSchemaVersion == null) {
+            send(new ErrorMessage("error", "MISSING_SCHEMA_VERSION",
+                    "Every input message must include an integer schemaVersion", null,
+                    null, null, null, SCHEMA_VERSION));
+            return;
+        }
+        if (receivedSchemaVersion != SCHEMA_VERSION) {
+            send(new ErrorMessage("error", "UNSUPPORTED_SCHEMA_VERSION",
+                    "Input schemaVersion is not supported", null,
+                    null, null, receivedSchemaVersion, SCHEMA_VERSION));
+            return;
+        }
         String type = stringField(input, "type");
         if (type == null) {
             error("invalidMessage", "Missing string field 'type'", null);
@@ -109,19 +142,28 @@ final class BridgeProtocol implements AutoCloseable {
             return;
         }
 
+        Long interactionSequence = longField(input, "interactionSequence");
+        if (interactionSequence == null) {
+            error("MISSING_INTERACTION_SEQUENCE",
+                    "Async action must include an integer interactionSequence", null);
+            return;
+        }
         Command command;
         switch (type) {
         case "selectCard":
-            command = new Command(CommandType.SELECT_CARD, integerField(input, "cardId"), null);
+            command = new Command(CommandType.SELECT_CARD, integerField(input, "cardId"), null,
+                    interactionSequence);
             break;
         case "selectPlayer":
-            command = new Command(CommandType.SELECT_PLAYER, integerField(input, "playerId"), null);
+            command = new Command(CommandType.SELECT_PLAYER, integerField(input, "playerId"), null,
+                    interactionSequence);
             break;
         case "button":
-            command = new Command(CommandType.BUTTON, null, stringField(input, "button"));
+            command = new Command(CommandType.BUTTON, null, stringField(input, "button"),
+                    interactionSequence);
             break;
         case "passPriority":
-            command = new Command(CommandType.PASS_PRIORITY, null, null);
+            command = new Command(CommandType.PASS_PRIORITY, null, null, interactionSequence);
             break;
         default:
             error("unknownMessageType", "Unsupported input type: " + type, null);
@@ -167,12 +209,24 @@ final class BridgeProtocol implements AutoCloseable {
     }
 
     private static Integer integerField(JsonObject input, String name) {
+        Long value = longField(input, name);
+        if (value == null || value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
+            return null;
+        }
+        return value.intValue();
+    }
+
+    private static Long longField(JsonObject input, String name) {
         JsonElement value = input.get(name);
         if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) {
             return null;
         }
+        String raw = value.getAsString();
+        if (!raw.matches("-?[0-9]+")) {
+            return null;
+        }
         try {
-            return value.getAsInt();
+            return Long.parseLong(raw);
         } catch (NumberFormatException e) {
             return null;
         }
@@ -194,9 +248,12 @@ final class BridgeProtocol implements AutoCloseable {
 
     private record LifecycleMessage(String type, String event, String detail) { }
 
-    private record ActionMessage(String type, String action, Integer selectedId) { }
+    private record ActionMessage(String type, String action, Integer selectedId,
+                                 long interactionSequence) { }
 
-    private record ErrorMessage(String type, String code, String message, String requestId) { }
+    private record ErrorMessage(String type, String code, String message, String requestId,
+                                Long receivedInteractionSequence, Long currentInteractionSequence,
+                                Long receivedSchemaVersion, Integer supportedSchemaVersion) { }
 
     private record AbilityChoice(int id, String description, boolean canPlay) { }
 
