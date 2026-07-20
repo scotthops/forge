@@ -608,7 +608,7 @@ public class UnifiedNetworkHarness implements IHasForgeLog {
                 break;
             }
 
-            if (stopWhenProbeSatisfied && interactionProbe != null && interactionProbe.sawGameStateAfterInteraction()) {
+            if (stopWhenProbeSatisfied && interactionProbe != null && interactionProbe.isStopConditionSatisfied()) {
                 result.turnCount = game != null ? game.getPhaseHandler().getTurn() : 0;
                 netLog.info("Probe satisfied after {} turn(s); ending spike harness early", result.turnCount);
                 return;

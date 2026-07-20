@@ -218,6 +218,46 @@ public class NetworkPlayIntegrationTest implements IHasForgeLog {
         }
     }
 
+    @Test(timeOut = 90000, description = "Spike B: scripted remote human land play through network controller path")
+    public void testRemoteHumanScriptedLandPlayThroughControllerPath() {
+        netLog.info("Starting Spike B scripted remote human land play test...");
+
+        String oldShowActionable = FModel.getPreferences().getPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS);
+        FModel.getPreferences().setPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS, true);
+
+        try {
+            NetworkInteractionProbe probe = new NetworkInteractionProbe();
+            probe.scriptPlayCardNamed("Mountain");
+
+            Deck hostDeck = TestDeckLoader.createMinimalDeck("Forest", 10);
+            Deck remoteDeck = TestDeckLoader.createMinimalDeck("Mountain", 10);
+
+            UnifiedNetworkHarness.GameResult result = new UnifiedNetworkHarness()
+                    .playerCount(2)
+                    .remoteClients(1)
+                    .useAiForRemotePlayers(false)
+                    .interactionProbe(probe)
+                    .stopWhenProbeSatisfied(true)
+                    .decks(hostDeck, remoteDeck)
+                    .gameTimeout(90000)
+                    .execute();
+
+            Assert.assertTrue(result.gameStarted, "Game should have started: " + result.toSummary());
+            Assert.assertTrue(result.deltaPacketsReceived > 0, "Remote client should receive delta packets");
+            Assert.assertTrue(probe.wasScriptedCardSelected(),
+                    "Probe should explicitly select the scripted Mountain. Log:\n" + probe.getLog());
+            Assert.assertTrue(probe.sawAuthoritativeUpdateAfterScriptedAction(),
+                    "Probe should receive an authoritative GameView update after the scripted action. Log:\n" + probe.getLog());
+            Assert.assertTrue(probe.sawScriptedHandToBattlefieldTransition(),
+                    "Scripted Mountain should move from Hand to Battlefield in a later GameView. Log:\n" + probe.getLog());
+
+            netLog.info("Spike B scripted action captured {} game-state updates and {} interaction callbacks",
+                    probe.getGameStateUpdateCount(), probe.getInteractionCount());
+        } finally {
+            FModel.getPreferences().setPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS, oldShowActionable);
+        }
+    }
+
     @Test(timeOut = 150000, description = "UnifiedNetworkHarness local mode test")
     public void testUnifiedHarnessLocalMode() {
         skipUnlessStressTestsEnabled();

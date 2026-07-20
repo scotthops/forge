@@ -3,6 +3,7 @@ package forge.net;
 import forge.game.GameView;
 import forge.game.card.CardView;
 import forge.game.combat.CombatView;
+import forge.game.phase.PhaseType;
 import forge.game.player.PlayerView;
 import forge.game.spellability.SpellAbilityView;
 import forge.game.spellability.StackItemView;
@@ -28,6 +29,11 @@ public class NetworkInteractionProbe {
     private final AtomicInteger postInteractionGameStateUpdates = new AtomicInteger();
     private final AtomicBoolean sawGameState = new AtomicBoolean();
     private final AtomicBoolean sawInteraction = new AtomicBoolean();
+    private volatile String scriptedCardName;
+    private volatile int scriptedCardId = -1;
+    private volatile int actionGameStateCount = -1;
+    private volatile boolean scriptedCardSelected = false;
+    private volatile boolean scriptedTransitionObserved = false;
 
     public void onGameState(String source, GameView gameView, Collection<PlayerView> localPlayers) {
         sawGameState.set(true);
@@ -35,6 +41,7 @@ public class NetworkInteractionProbe {
         if (sawInteraction.get()) {
             postInteractionGameStateUpdates.incrementAndGet();
         }
+        updateScriptedTransition(gameView, count);
 
         StringBuilder sb = new StringBuilder();
         sb.append("PROBE GAME STATE #").append(count).append(" source=").append(source).append('\n');
@@ -96,6 +103,10 @@ public class NetworkInteractionProbe {
         record(sb);
     }
 
+    public void scriptPlayCardNamed(String cardName) {
+        scriptedCardName = cardName;
+    }
+
     public void onPrompt(PlayerView player, String message, CardView card) {
         markInteraction();
         StringBuilder sb = new StringBuilder();
@@ -150,6 +161,53 @@ public class NetworkInteractionProbe {
         record(sb);
     }
 
+    public boolean shouldHoldPriorityForScript(GameView gameView, Collection<PlayerView> localPlayers) {
+        if (scriptedCardName == null) {
+            return false;
+        }
+        if (scriptedCardSelected) {
+            return !scriptedTransitionObserved;
+        }
+        return isLocalMainOnePriority(gameView, localPlayers) && findScriptTargetInHand(gameView, localPlayers) != null;
+    }
+
+    public CardView chooseScriptedWeakSelectable(GameView gameView, Collection<PlayerView> localPlayers,
+                                                Iterable<CardView> cards) {
+        if (scriptedCardName == null || scriptedCardSelected || !isLocalMainOnePriority(gameView, localPlayers)) {
+            return null;
+        }
+        CardView targetInHand = findScriptTargetInHand(gameView, localPlayers);
+        if (targetInHand == null || cards == null) {
+            return null;
+        }
+        for (CardView card : cards) {
+            if (card != null && card.getId() == targetInHand.getId()
+                    && scriptedCardName.equals(card.getName())
+                    && card.getZone() == ZoneType.Hand) {
+                return card;
+            }
+        }
+        return null;
+    }
+
+    public void onBeforeScriptedAction(GameView gameView, Collection<PlayerView> localPlayers, CardView target) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("SPIKE_B BEFORE ACTION\n");
+        appendGameSummary(sb, gameView);
+        sb.append("  target=").append(cardSummary(target)).append('\n');
+        appendLocalZones(sb, gameView, localPlayers);
+        record(sb);
+    }
+
+    public void onScriptedAction(CardView selected, String controllerPath) {
+        scriptedCardSelected = true;
+        scriptedCardId = selected != null ? selected.getId() : -1;
+        actionGameStateCount = gameStateUpdates.get();
+        record(new StringBuilder()
+                .append("SPIKE_B ACTION selected=").append(cardSummary(selected))
+                .append(" path=\"").append(safe(controllerPath)).append('"'));
+    }
+
     public void onSelectablePlayers(Iterable<PlayerView> players, String reason) {
         markInteraction();
         StringBuilder sb = new StringBuilder();
@@ -180,6 +238,22 @@ public class NetworkInteractionProbe {
         return postInteractionGameStateUpdates.get() > 0;
     }
 
+    public boolean isStopConditionSatisfied() {
+        return scriptedCardName == null ? sawGameStateAfterInteraction() : scriptedTransitionObserved;
+    }
+
+    public boolean wasScriptedCardSelected() {
+        return scriptedCardSelected;
+    }
+
+    public boolean sawAuthoritativeUpdateAfterScriptedAction() {
+        return scriptedCardSelected && gameStateUpdates.get() > actionGameStateCount;
+    }
+
+    public boolean sawScriptedHandToBattlefieldTransition() {
+        return scriptedTransitionObserved;
+    }
+
     public int getGameStateUpdateCount() {
         return gameStateUpdates.get();
     }
@@ -205,6 +279,112 @@ public class NetworkInteractionProbe {
         String line = sb.toString();
         entries.add(line);
         System.out.println(line);
+    }
+
+    private void updateScriptedTransition(GameView gameView, int count) {
+        if (!scriptedCardSelected || scriptedTransitionObserved || gameView == null || count <= actionGameStateCount) {
+            return;
+        }
+        boolean inHand = false;
+        boolean onBattlefield = false;
+        CardView battlefieldCard = null;
+        for (PlayerView player : safePlayers(gameView)) {
+            for (CardView card : safeCards(player.getHand())) {
+                if (card.getId() == scriptedCardId) {
+                    inHand = true;
+                }
+            }
+            for (CardView card : safeCards(player.getBattlefield())) {
+                if (card.getId() == scriptedCardId
+                        || (scriptedCardName != null && scriptedCardName.equals(card.getName()))) {
+                    onBattlefield = true;
+                    battlefieldCard = card;
+                }
+            }
+        }
+        if (!inHand && onBattlefield) {
+            scriptedTransitionObserved = true;
+            StringBuilder sb = new StringBuilder();
+            sb.append("SPIKE_B AFTER ACTION\n");
+            appendGameSummary(sb, gameView);
+            sb.append("  selectedCardId=").append(scriptedCardId)
+                    .append(" noLongerInHand=").append(true)
+                    .append(" battlefield=").append(cardSummary(battlefieldCard))
+                    .append('\n');
+            for (PlayerView player : safePlayers(gameView)) {
+                sb.append("  player=").append(playerSummary(player)).append('\n');
+                appendZone(sb, "handVisible", player.getHand(), Collections.emptyList(), false);
+                appendZone(sb, "battlefield", player.getBattlefield(), Collections.emptyList(), false);
+            }
+            record(sb);
+        }
+    }
+
+    private CardView findScriptTargetInHand(GameView gameView, Collection<PlayerView> localPlayers) {
+        if (gameView == null || scriptedCardName == null || localPlayers == null) {
+            return null;
+        }
+        for (PlayerView localPlayer : localPlayers) {
+            for (PlayerView player : safePlayers(gameView)) {
+                if (player.getId() != localPlayer.getId()) {
+                    continue;
+                }
+                for (CardView card : safeCards(player.getHand())) {
+                    if (scriptedCardName.equals(card.getName()) && card.getZone() == ZoneType.Hand) {
+                        return card;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean isLocalMainOnePriority(GameView gameView, Collection<PlayerView> localPlayers) {
+        if (gameView == null || gameView.getPhase() != PhaseType.MAIN1 || localPlayers == null) {
+            return false;
+        }
+        PlayerView turnPlayer = gameView.getPlayerTurn();
+        for (PlayerView localPlayer : localPlayers) {
+            for (PlayerView player : safePlayers(gameView)) {
+                if (player.getId() == localPlayer.getId()
+                        && player.getHasPriority()
+                        && turnPlayer != null
+                        && turnPlayer.getId() == localPlayer.getId()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static Iterable<CardView> safeCards(Iterable<CardView> cards) {
+        return cards == null ? Collections.emptyList() : cards;
+    }
+
+    private static void appendGameSummary(StringBuilder sb, GameView gameView) {
+        if (gameView == null) {
+            sb.append("  gameView=null\n");
+            return;
+        }
+        sb.append("  turn=").append(gameView.getTurn())
+                .append(" phase=").append(gameView.getPhase())
+                .append(" priority=").append(priorityPlayer(gameView))
+                .append('\n');
+    }
+
+    private static void appendLocalZones(StringBuilder sb, GameView gameView, Collection<PlayerView> localPlayers) {
+        if (gameView == null || localPlayers == null) {
+            return;
+        }
+        for (PlayerView localPlayer : localPlayers) {
+            for (PlayerView player : safePlayers(gameView)) {
+                if (player.getId() == localPlayer.getId()) {
+                    sb.append("  localPlayer=").append(playerSummary(player)).append('\n');
+                    appendZone(sb, "handVisible", player.getHand(), localPlayers, true);
+                    appendZone(sb, "battlefield", player.getBattlefield(), localPlayers, false);
+                }
+            }
+        }
     }
 
     private static Iterable<PlayerView> safePlayers(GameView gameView) {

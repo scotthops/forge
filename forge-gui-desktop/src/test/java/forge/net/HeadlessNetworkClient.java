@@ -177,6 +177,9 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
     @Override
     public void close() {
         netLog.info("Disconnecting");
+        if (guiGame != null) {
+            guiGame.shutdownAutoResponses();
+        }
         if (client != null) {
             try {
                 client.close();
@@ -461,6 +464,10 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
             }
             // Auto-respond to button prompts (mulligan, priority, etc.)
             if (gameController != null && okEnabled) {
+                if (client.probe != null && client.probe.shouldHoldPriorityForScript(getGameView(), getLocalPlayers())) {
+                    netLog.info("Holding OK auto-response while scripted card action is pending");
+                    return;
+                }
                 netLog.info("Auto-clicking OK for player: {}",
                         owner != null ? owner.getName() : "unknown");
                 scheduleAutoResponse(() -> gameController.selectButtonOk(), 50, "click OK button");
@@ -476,6 +483,10 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
             }
             // Auto-respond to labeled button prompts - click first enabled button
             if (gameController != null && (enable1 || enable2)) {
+                if (client.probe != null && client.probe.shouldHoldPriorityForScript(getGameView(), getLocalPlayers())) {
+                    netLog.info("Holding button auto-response while scripted card action is pending");
+                    return;
+                }
                 String clickTarget = enable1 ? label1 : label2;
                 netLog.info("Auto-clicking '{}' for player: {}",
                         clickTarget, owner != null ? owner.getName() : "unknown");
@@ -524,6 +535,15 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
             super.setWeaklySelectable(cards);
             if (client.probe != null) {
                 client.probe.onWeakSelectables(cards);
+                forge.game.card.CardView scripted = client.probe.chooseScriptedWeakSelectable(
+                        getGameView(), getLocalPlayers(), cards);
+                if (scripted != null && gameController != null) {
+                    client.probe.onBeforeScriptedAction(getGameView(), getLocalPlayers(), scripted);
+                    client.probe.onScriptedAction(scripted,
+                            "DeltaLoggingGuiGame.setWeaklySelectable -> IGameController.selectCard -> NetGameController.selectCard -> ProtocolMethod.selectCard");
+                    scheduleAutoResponse(() -> gameController.selectCard(scripted, null, null),
+                            25, "scripted select card " + scripted.getName());
+                }
             }
         }
 
@@ -558,8 +578,13 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
         @Override
         public void afterGameEnd() {
             super.afterGameEnd();
-            autoResponseExecutor.shutdownNow();
+            shutdownAutoResponses();
             client.onGameEnd();
+        }
+
+        void shutdownAutoResponses() {
+            cancelPendingAutoResponse("client closing");
+            autoResponseExecutor.shutdownNow();
         }
     }
 
