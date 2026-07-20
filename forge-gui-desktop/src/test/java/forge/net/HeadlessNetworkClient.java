@@ -464,6 +464,13 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
             }
             // Auto-respond to button prompts (mulligan, priority, etc.)
             if (gameController != null && okEnabled) {
+                if (client.probe != null
+                        && client.probe.shouldPassPriorityForSpikeC(getGameView(), getLocalPlayers())) {
+                    String path = "DeltaLoggingGuiGame.updateButtons -> IGameController.passPriority -> NetGameController.passPriority -> ProtocolMethod.passPriority";
+                    client.probe.onSpikeCPriorityPass(path);
+                    scheduleAutoResponse(() -> gameController.passPriority(), 25, "Spike C pass priority");
+                    return;
+                }
                 if (client.probe != null && client.probe.shouldHoldPriorityForScript(getGameView(), getLocalPlayers())) {
                     netLog.info("Holding OK auto-response while scripted card action is pending");
                     return;
@@ -483,6 +490,13 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
             }
             // Auto-respond to labeled button prompts - click first enabled button
             if (gameController != null && (enable1 || enable2)) {
+                if (client.probe != null
+                        && client.probe.shouldPassPriorityForSpikeC(getGameView(), getLocalPlayers())) {
+                    String path = "DeltaLoggingGuiGame.updateButtons -> IGameController.passPriority -> NetGameController.passPriority -> ProtocolMethod.passPriority";
+                    client.probe.onSpikeCPriorityPass(path);
+                    scheduleAutoResponse(() -> gameController.passPriority(), 25, "Spike C pass priority");
+                    return;
+                }
                 if (client.probe != null && client.probe.shouldHoldPriorityForScript(getGameView(), getLocalPlayers())) {
                     netLog.info("Holding button auto-response while scripted card action is pending");
                     return;
@@ -512,6 +526,18 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
             super.setSelectables(cards, min, max);
             if (client.probe != null) {
                 client.probe.onSelectables(cards, min, max);
+                forge.game.card.CardView scripted = client.probe.chooseScriptedSelectable(cards);
+                if (scripted != null && gameController != null) {
+                    String path = "DeltaLoggingGuiGame.setSelectables -> IGameController.selectCard -> NetGameController.selectCard -> ProtocolMethod.selectCard";
+                    client.probe.onSpikeCCardAction(scripted, path);
+                    synchronized (pendingSelectables) {
+                        pendingSelectables.clear();
+                        selectableIndex = 0;
+                    }
+                    scheduleAutoResponse(() -> gameController.selectCard(scripted, null, null),
+                            25, "Spike C select target " + scripted.getName());
+                    return;
+                }
             }
             synchronized (pendingSelectables) {
                 // Track selectable cards for multi-selection prompts
@@ -538,9 +564,13 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
                 forge.game.card.CardView scripted = client.probe.chooseScriptedWeakSelectable(
                         getGameView(), getLocalPlayers(), cards);
                 if (scripted != null && gameController != null) {
-                    client.probe.onBeforeScriptedAction(getGameView(), getLocalPlayers(), scripted);
-                    client.probe.onScriptedAction(scripted,
-                            "DeltaLoggingGuiGame.setWeaklySelectable -> IGameController.selectCard -> NetGameController.selectCard -> ProtocolMethod.selectCard");
+                    String path = "DeltaLoggingGuiGame.setWeaklySelectable -> IGameController.selectCard -> NetGameController.selectCard -> ProtocolMethod.selectCard";
+                    if (client.probe.isSpikeCActive()) {
+                        client.probe.onSpikeCCardAction(scripted, path);
+                    } else {
+                        client.probe.onBeforeScriptedAction(getGameView(), getLocalPlayers(), scripted);
+                        client.probe.onScriptedAction(scripted, path);
+                    }
                     scheduleAutoResponse(() -> gameController.selectCard(scripted, null, null),
                             25, "scripted select card " + scripted.getName());
                 }
@@ -554,8 +584,31 @@ public class HeadlessNetworkClient implements AutoCloseable, IHasForgeLog {
                 forge.util.ITriggerEvent triggerEvent) {
             if (client.probe != null) {
                 client.probe.onAbilityChoices(hostCard, abilities);
+                forge.game.spellability.SpellAbilityView scripted =
+                        client.probe.chooseScriptedAbility(hostCard, abilities);
+                if (scripted != null) {
+                    return scripted;
+                }
             }
             return super.getAbilityToPlay(hostCard, abilities, triggerEvent);
+        }
+
+        @Override
+        public void showManaPool(forge.game.player.PlayerView player) {
+            super.showManaPool(player);
+            if (client.probe != null) {
+                client.probe.onManaPayment("IGuiGame.showManaPool", player, getGameView());
+            }
+        }
+
+        @Override
+        public void updateManaPool(Iterable<forge.game.player.PlayerView> players) {
+            super.updateManaPool(players);
+            if (client.probe != null && players != null) {
+                for (forge.game.player.PlayerView player : players) {
+                    client.probe.onManaPayment("IGuiGame.updateManaPool", player, getGameView());
+                }
+            }
         }
 
         /**

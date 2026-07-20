@@ -258,6 +258,66 @@ public class NetworkPlayIntegrationTest implements IHasForgeLog {
         }
     }
 
+    @Test(timeOut = 120000, description = "Spike C: scripted remote human targeted spell cast through network controller path")
+    public void testRemoteHumanScriptedLightningBoltTargetThroughControllerPath() {
+        netLog.info("Starting Spike C scripted targeted spell cast test...");
+
+        String oldShowActionable = FModel.getPreferences().getPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS);
+        FModel.getPreferences().setPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS, true);
+
+        try {
+            NetworkInteractionProbe probe = new NetworkInteractionProbe();
+            probe.scriptCastSpellTargeting("Lightning Bolt", "Llanowar Elves", "Mountain");
+
+            var cardDb = FModel.getMagicDb().getCommonCards();
+            var lightningBolt = cardDb.getCard("Lightning Bolt");
+            var llanowarElves = cardDb.getCard("Llanowar Elves");
+            Assert.assertNotNull(lightningBolt, "Lightning Bolt must exist in the test card database");
+            Assert.assertNotNull(llanowarElves, "Llanowar Elves must exist in the test card database");
+
+            // Eight-card decks make both opening scenarios deterministic after one draw:
+            // Bob has or draws Bolt by turn two, while Alice always opens both Forest and Elves.
+            Deck hostDeck = TestDeckLoader.createMinimalDeck("Forest", 4);
+            Deck remoteDeck = TestDeckLoader.createMinimalDeck("Mountain", 7);
+            for (int i = 0; i < 4; i++) {
+                hostDeck.getMain().add(llanowarElves);
+            }
+            remoteDeck.getMain().add(lightningBolt);
+
+            UnifiedNetworkHarness.GameResult result = new UnifiedNetworkHarness()
+                    .playerCount(2)
+                    .remoteClients(1)
+                    .useAiForRemotePlayers(false)
+                    .interactionProbe(probe)
+                    .stopWhenProbeSatisfied(true)
+                    .decks(hostDeck, remoteDeck)
+                    .gameTimeout(120000)
+                    .execute();
+
+            Assert.assertTrue(result.gameStarted, "Game should have started: " + result.toSummary());
+            Assert.assertTrue(result.deltaPacketsReceived > 0, "Remote client should receive delta packets");
+            Assert.assertTrue(probe.wasSpikeCSpellSelected(),
+                    "Probe should explicitly select Lightning Bolt. Log:\n" + probe.getLog());
+            Assert.assertTrue(probe.wasSpikeCTargetSelected(),
+                    "Probe should explicitly select Llanowar Elves. Log:\n" + probe.getLog());
+            Assert.assertTrue(probe.wasSpikeCManaSourceSelected(),
+                    "Probe should explicitly select Mountain through InputPayMana. Log:\n" + probe.getLog());
+            Assert.assertTrue(probe.sawSpikeCAuthoritativeUpdateAfterCast(),
+                    "Probe should receive an authoritative GameView update after selecting Bolt. Log:\n" + probe.getLog());
+            Assert.assertTrue(probe.sawSpikeCStack(),
+                    "An authoritative GameView should expose Lightning Bolt on the stack. Log:\n" + probe.getLog());
+            Assert.assertTrue(probe.sawSpikeCTargetOnStack(),
+                    "The stack item should expose the explicitly selected Llanowar Elves target. Log:\n" + probe.getLog());
+            Assert.assertTrue(probe.sawSpikeCResolution(),
+                    "Llanowar Elves should move from Battlefield to Graveyard after Bolt resolves. Log:\n" + probe.getLog());
+
+            netLog.info("Spike C captured {} game-state updates and {} interaction callbacks",
+                    probe.getGameStateUpdateCount(), probe.getInteractionCount());
+        } finally {
+            FModel.getPreferences().setPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS, oldShowActionable);
+        }
+    }
+
     @Test(timeOut = 150000, description = "UnifiedNetworkHarness local mode test")
     public void testUnifiedHarnessLocalMode() {
         skipUnlessStressTestsEnabled();
