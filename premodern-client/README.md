@@ -64,6 +64,34 @@ In a second terminal or the Godot editor, run `premodern-client/project.godot`. 
 
 Press Enter in the host terminal after verification to stop it cleanly.
 
+## Run The H1 Sligh Mirror
+
+This development-only fixture gives both players the exact 60-card Premodern Sligh list, uses
+Forge's normal shuffle/opening-draw path, assigns the first seat to Forge AI, and leaves the second
+seat for the real Godot bridge client. It does not predetermine draws or submit gameplay actions.
+The deterministic G3 fixture above remains available for regression work.
+
+Build the bridge, desktop test classes, and desktop dependency JAR:
+
+```powershell
+mvn --% -pl forge-gui-desktop,forge-bridge -am -DskipTests package
+```
+
+Start the Sligh host from the Forge assets directory:
+
+```powershell
+Push-Location forge-gui
+java -cp "..\forge-gui-desktop\target\test-classes;..\forge-gui-desktop\target\forge-gui-desktop-2.0.14-SNAPSHOT-jar-with-dependencies.jar" forge.net.GodotSlighMirrorHostMain 36743
+Pop-Location
+```
+
+Then press Play in the Godot editor for `premodern-client/project.godot`. The client launches the
+existing bridge, joins the open seat, and the host starts automatically. The opening hand is a
+normal seven-card draw. Use Forge's **Keep** and **Mulligan** buttons; after keeping, use the existing
+green `READY` cards, ability-choice panel, mana-source selection, and **Pass Priority** controls. If
+you mulligan, the existing **Auto** button can choose the required London-mulligan cards to return.
+Press Enter in the host terminal after the playtest to stop it.
+
 ## Run Against Forge Desktop
 
 1. Start Forge Desktop and host an online/network game on the configured port (default `36743`).

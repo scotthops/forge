@@ -78,7 +78,7 @@ public final class FServerManager implements IHasForgeLog {
     private final Map<Channel, RemoteClient> clients = new ConcurrentHashMap<>();
     private final Map<String, RemoteClient> disconnectedClients = new ConcurrentHashMap<>();
     private final Map<String, Timer> reconnectTimers = new ConcurrentHashMap<>();
-    private boolean isHosting = false;
+    private volatile boolean isHosting = false;
     private EventLoopGroup bossGroup = new NioEventLoopGroup(1);
     private EventLoopGroup workerGroup = new NioEventLoopGroup();
     private UpnpService upnpService = null;
@@ -237,7 +237,14 @@ public final class FServerManager implements IHasForgeLog {
         stopServer(true);
     }
 
-    private void stopServer(final boolean removeShutdownHook) {
+    private synchronized void stopServer(final boolean removeShutdownHook) {
+        if (!isHosting) {
+            return;
+        }
+        // Publish the stopped state before cleanup closes the server channel. Its close-future
+        // callback also calls stopServer(), and must observe that shutdown is already underway.
+        isHosting = false;
+
         // Cancel all reconnect timers
         for (final Timer timer : reconnectTimers.values()) {
             timer.cancel();
@@ -257,15 +264,24 @@ public final class FServerManager implements IHasForgeLog {
             upnpService.shutdown();
             upnpService = null;
         }
+        boolean prepareForRestart = removeShutdownHook;
         if (removeShutdownHook) {
-            Runtime.getRuntime().removeShutdownHook(shutdownHook);
+            try {
+                Runtime.getRuntime().removeShutdownHook(shutdownHook);
+            } catch (final IllegalStateException ignored) {
+                // The JVM has already started running shutdown hooks. Cleanup is still valid, but
+                // Runtime deliberately forbids changing the hook registry at this point.
+                prepareForRestart = false;
+            }
         }
-        isHosting = false;
         UPnPMapped = false;
         NetworkLogConfig.deactivateNetworkLogging();
-        // create new EventLoopGroups for potential restart
-        bossGroup = new NioEventLoopGroup(1);
-        workerGroup = new NioEventLoopGroup();
+        if (prepareForRestart) {
+            // Normal stops may be followed by another start in the same JVM. During JVM shutdown,
+            // avoid creating replacement executor threads that can never be used.
+            bossGroup = new NioEventLoopGroup(1);
+            workerGroup = new NioEventLoopGroup();
+        }
     }
 
     public boolean isHosting() {
