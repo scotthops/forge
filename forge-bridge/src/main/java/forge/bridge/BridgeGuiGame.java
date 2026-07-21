@@ -168,8 +168,17 @@ public final class BridgeGuiGame extends NetworkGuiGame {
     @Override
     public SpellAbilityView getAbilityToPlay(CardView hostCard, List<SpellAbilityView> abilities,
             ITriggerEvent triggerEvent) {
-        listener.interactionObserved();
         List<SpellAbilityView> offered = abilities == null ? Collections.emptyList() : List.copyOf(abilities);
+        if (offered.isEmpty()) {
+            return null;
+        }
+        // Match CMatchUI: a null trigger event with one Forge-offered ability is
+        // already an unambiguous selection, even when its normal canPlay flag is false.
+        if (triggerEvent == null && offered.size() == 1) {
+            return offered.get(0);
+        }
+
+        listener.interactionObserved();
         SpellAbilityView selected = protocol.queryAbility(hostCard, offered);
         if (selected == null) {
             listener.unsupportedRequiredQuery();
