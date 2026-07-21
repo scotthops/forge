@@ -94,13 +94,6 @@ public final class BridgeGuiGame extends NetworkGuiGame {
 
     @Override
     public void showPromptMessage(PlayerView playerView, String message, CardView card) {
-        selectablePlayers.clear();
-        if (message != null && message.contains("Click on the portrait") && getGameView() != null
-                && getGameView().getPlayers() != null) {
-            for (PlayerView player : getGameView().getPlayers()) {
-                selectablePlayers.put(player.getId(), player);
-            }
-        }
         printer.prompt(message, List.copyOf(selectablePlayers.keySet()));
         listener.interactionObserved();
     }
@@ -134,6 +127,23 @@ public final class BridgeGuiGame extends NetworkGuiGame {
         super.clearSelectables();
         selectableCards.clear();
         printer.selectables(Collections.emptyList(), getLocalPlayers(), 0, 0);
+        listener.interactionObserved();
+    }
+
+    @Override
+    public void setSelectablePlayers(Iterable<PlayerView> players) {
+        selectablePlayers.clear();
+        if (players != null) {
+            players.forEach(player -> selectablePlayers.put(player.getId(), player));
+        }
+        printer.selectablePlayers(List.copyOf(selectablePlayers.keySet()));
+        listener.interactionObserved();
+    }
+
+    @Override
+    public void clearSelectablePlayers() {
+        selectablePlayers.clear();
+        printer.selectablePlayers(Collections.emptyList());
         listener.interactionObserved();
     }
 

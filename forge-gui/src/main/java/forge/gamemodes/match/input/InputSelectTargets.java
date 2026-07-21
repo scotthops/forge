@@ -10,6 +10,7 @@ import forge.game.ability.ApiType;
 import forge.game.card.Card;
 import forge.game.card.CardView;
 import forge.game.player.Player;
+import forge.game.player.PlayerView;
 import forge.game.spellability.SpellAbility;
 import forge.game.spellability.TargetRestrictions;
 import forge.gui.FThreads;
@@ -66,6 +67,7 @@ public final class InputSelectTargets extends InputSyncronizedBase {
         final int initialMin = numTargets != null ? numTargets : sa.getMinTargets();
         final int initialMax = numTargets != null ? numTargets : sa.getMaxTargets();
         controller.getGui().setSelectables(CardView.getCollection(choices), initialMin, initialMax);
+        publishSelectablePlayers();
         final PlayerZoneUpdates zonesToUpdate = new PlayerZoneUpdates();
         for (final Card c : choices) {
             zonesToUpdate.add(new PlayerZoneUpdate(c.getZone().getPlayer().getView(), c.getZone().getZoneType()));
@@ -365,6 +367,25 @@ public final class InputSelectTargets extends InputSyncronizedBase {
         addTarget(player);
     }
 
+    private void publishSelectablePlayers() {
+        final List<Player> players = new ArrayList<>();
+        for (final Player player : sa.getHostCard().getGame().getPlayers()) {
+            if (targets.contains(player) || isSelectablePlayer(player)) {
+                players.add(player);
+            }
+        }
+        getController().getGui().setSelectablePlayers(PlayerView.getCollection(players));
+    }
+
+    private boolean isSelectablePlayer(final Player player) {
+        return !player.hasLost()
+                && (!sa.isSpell() || !sa.getHostCard().isAura()
+                        || player.canBeAttached(sa.getHostCard(), sa))
+                && sa.canTarget(player)
+                && !mustTargetFiltered
+                && (filter == null || filter.test(player));
+    }
+
     public boolean selectPlayerForMacro(final Player player, final ITriggerEvent triggerEvent) {
         final int oldTargetCount = targets.size();
         onPlayerSelected(player, triggerEvent);
@@ -452,6 +473,7 @@ public final class InputSelectTargets extends InputSyncronizedBase {
     @Override
     protected void onStop() {
         getController().getGui().clearSelectables();
+        getController().getGui().clearSelectablePlayers();
         super.onStop();
     }
 

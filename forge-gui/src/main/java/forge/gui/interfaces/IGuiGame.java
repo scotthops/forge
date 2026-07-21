@@ -271,6 +271,10 @@ public interface IGuiGame {
      */
     void setSelectables(Iterable<CardView> cards, int min, int max);
     void clearSelectables();
+
+    /** Publish players that the active Forge input explicitly permits the user to select. */
+    default void setSelectablePlayers(Iterable<PlayerView> players) {}
+    default void clearSelectablePlayers() {}
     boolean isSelecting();
 
     void setWeaklySelectable(final Iterable<CardView> cards);

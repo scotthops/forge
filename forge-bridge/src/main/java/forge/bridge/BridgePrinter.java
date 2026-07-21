@@ -58,6 +58,11 @@ final class BridgePrinter {
         printInteraction("selectables");
     }
 
+    synchronized void selectablePlayers(List<Integer> playerIds) {
+        interaction = interaction.withSelectablePlayers(List.copyOf(playerIds));
+        printInteraction("selectablePlayers");
+    }
+
     synchronized void weaklySelectable(Iterable<CardView> cards, Collection<PlayerView> localPlayers) {
         interaction = interaction.withWeaklySelectable(cardIds(cards, localPlayers));
         printInteraction("weaklySelectable");
@@ -212,6 +217,11 @@ final class BridgePrinter {
         private InteractionSnapshot withSelectables(List<Integer> value, int newMin, int newMax) {
             return new InteractionSnapshot(prompt, weaklySelectableCardIds, value,
                     selectablePlayerIds, newMin, newMax, buttons);
+        }
+
+        private InteractionSnapshot withSelectablePlayers(List<Integer> value) {
+            return new InteractionSnapshot(prompt, weaklySelectableCardIds, selectableCardIds,
+                    value, min, max, buttons);
         }
 
         private InteractionSnapshot withWeaklySelectable(List<Integer> value) {

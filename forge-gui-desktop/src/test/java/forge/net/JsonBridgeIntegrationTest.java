@@ -17,6 +17,7 @@ import forge.localinstance.properties.ForgePreferences.FPref;
 import forge.model.FModel;
 import org.testng.Assert;
 import org.testng.annotations.BeforeClass;
+import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 import java.io.BufferedReader;
@@ -41,9 +42,14 @@ public class JsonBridgeIntegrationTest {
         TestUtils.ensureFModelInitialized();
     }
 
-    @Test(timeOut = 150000,
+    @DataProvider(name = "boltTargets")
+    public Object[][] boltTargets() {
+        return new Object[][] {{"card"}, {"opponent"}, {"self"}};
+    }
+
+    @Test(dataProvider = "boltTargets", timeOut = 150000,
             description = "External JSONL process casts targeted spell through standalone bridge")
-    public void testExternalJsonDriverCastsLightningBolt() throws Exception {
+    public void testExternalJsonDriverCastsLightningBolt(String target) throws Exception {
         FServerManager server = FServerManager.getInstance();
         ServerGameLobby lobby = null;
         Process bridge = null;
@@ -81,7 +87,7 @@ public class JsonBridgeIntegrationTest {
             String driverClasspath = root.resolve("forge-gui-desktop/target/test-classes")
                     + File.pathSeparator + gsonLocation();
             driver = new ProcessBuilder(
-                    java.toString(), "-cp", driverClasspath, ExternalJsonDriverMain.class.getName())
+                    java.toString(), "-cp", driverClasspath, ExternalJsonDriverMain.class.getName(), target)
                     .directory(root.toFile())
                     .redirectErrorStream(false)
                     .start();
@@ -121,7 +127,7 @@ public class JsonBridgeIntegrationTest {
 
             List<JsonObject> outputMessages = parseJsonLines(bridgeJson.toString());
             List<JsonObject> commands = parseJsonLines(driverJson.toString());
-            assertProtocolProof(outputMessages, commands, driverDiagnostics.toString());
+            assertProtocolProof(outputMessages, commands, driverDiagnostics.toString(), target);
         } finally {
             FModel.getPreferences().setPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS, oldShowActionable);
             try {
@@ -165,7 +171,7 @@ public class JsonBridgeIntegrationTest {
     }
 
     private static void assertProtocolProof(List<JsonObject> output, List<JsonObject> commands,
-            String driverDiagnostics) {
+            String driverDiagnostics, String target) {
         Assert.assertTrue(output.stream().allMatch(message -> integer(message, "schemaVersion", -1) == 1),
                 "Every bridge output must use schemaVersion 1");
         Assert.assertEquals(commands.stream().filter(message -> !message.has("schemaVersion")).count(), 1,
@@ -194,7 +200,18 @@ public class JsonBridgeIntegrationTest {
         Assert.assertTrue(elvesId >= 0, "Llanowar Elves was never on Alice's battlefield");
         assertStaleCardLeftStateUnchanged(output, mountainId);
         Assert.assertTrue(hasSelection(commands, boltId), "Driver did not explicitly select Lightning Bolt");
-        Assert.assertTrue(hasSelection(commands, elvesId), "Driver did not explicitly select Llanowar Elves");
+        int bobId = findPlayerId(output, "Bob (JSON Driver)");
+        int aliceId = findPlayerId(output, "Alice (Host AI)");
+        Assert.assertTrue(sawTargetOptions(output, elvesId, aliceId, bobId),
+                "Forge did not expose the card and both players in one target interaction");
+        if ("card".equals(target)) {
+            Assert.assertTrue(hasSelection(commands, elvesId),
+                    "Driver did not explicitly select Llanowar Elves");
+        } else {
+            int targetPlayerId = "self".equals(target) ? bobId : aliceId;
+            Assert.assertTrue(hasPlayerSelection(commands, targetPlayerId),
+                    "Driver did not explicitly select player " + targetPlayerId);
+        }
         Assert.assertTrue(commands.stream().anyMatch(message -> "passPriority".equals(type(message))),
                 "Driver did not pass priority");
         Assert.assertEquals(output.stream()
@@ -214,10 +231,19 @@ public class JsonBridgeIntegrationTest {
                         && requestId.equals(string(message, "requestId"))),
                 "No correlated abilityChoice reply for " + requestId);
 
-        Assert.assertTrue(sawStackTarget(output, boltId, elvesId),
-                "Authoritative state never exposed Bolt targeting Llanowar Elves on the stack");
-        Assert.assertTrue(sawFinalGraveyard(output, elvesId),
-                "Authoritative state never moved Llanowar Elves to Alice's graveyard");
+        if ("card".equals(target)) {
+            Assert.assertTrue(sawStackTarget(output, boltId, elvesId),
+                    "Authoritative state never exposed Bolt targeting Llanowar Elves on the stack");
+            Assert.assertTrue(sawFinalGraveyard(output, elvesId),
+                    "Authoritative state never moved Llanowar Elves to Alice's graveyard");
+        } else {
+            int damagedId = "self".equals(target) ? bobId : aliceId;
+            int undamagedId = "self".equals(target) ? aliceId : bobId;
+            Assert.assertTrue(sawFinalLife(output, damagedId, 17),
+                    "Authoritative state never showed 3 damage to player " + damagedId);
+            Assert.assertTrue(sawFinalLife(output, undamagedId, 20),
+                    "The untargeted player life total changed");
+        }
         Assert.assertTrue(driverDiagnostics.contains("DRIVER_SUCCESS")
                         && driverDiagnostics.contains("abilityReply=true"),
                 driverDiagnostics);
@@ -281,9 +307,42 @@ public class JsonBridgeIntegrationTest {
         return -1;
     }
 
+    private static int findPlayerId(List<JsonObject> messages, String playerName) {
+        for (JsonObject message : messages) {
+            if (!"state".equals(type(message))) {
+                continue;
+            }
+            JsonObject player = playerNamed(message, playerName);
+            if (player != null) {
+                return integer(player, "id", -1);
+            }
+        }
+        return -1;
+    }
+
     private static boolean hasSelection(List<JsonObject> messages, int cardId) {
         return messages.stream().anyMatch(message -> "selectCard".equals(type(message))
                 && message.has("cardId") && message.get("cardId").getAsInt() == cardId);
+    }
+
+    private static boolean hasPlayerSelection(List<JsonObject> messages, int playerId) {
+        return messages.stream().anyMatch(message -> "selectPlayer".equals(type(message))
+                && integer(message, "playerId", -1) == playerId);
+    }
+
+    private static boolean sawTargetOptions(List<JsonObject> messages, int cardId,
+            int firstPlayerId, int secondPlayerId) {
+        for (JsonObject message : messages) {
+            if (!"interaction".equals(type(message))) {
+                continue;
+            }
+            if (contains(message.getAsJsonArray("selectableCardIds"), cardId)
+                    && contains(message.getAsJsonArray("selectablePlayerIds"), firstPlayerId)
+                    && contains(message.getAsJsonArray("selectablePlayerIds"), secondPlayerId)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void assertStaleCardLeftStateUnchanged(List<JsonObject> output, int mountainId) {
@@ -362,6 +421,23 @@ public class JsonBridgeIntegrationTest {
                 if (!battlefield && graveyard) {
                     return true;
                 }
+            }
+        }
+        return false;
+    }
+
+    private static boolean sawFinalLife(List<JsonObject> messages, int playerId, int life) {
+        return messages.stream().filter(message -> "state".equals(type(message)))
+                .flatMap(message -> message.getAsJsonArray("players").asList().stream())
+                .map(JsonElement::getAsJsonObject)
+                .anyMatch(player -> integer(player, "id", -1) == playerId
+                        && integer(player, "life", -1) == life);
+    }
+
+    private static boolean contains(Iterable<JsonElement> values, int expected) {
+        for (JsonElement value : values) {
+            if (value.getAsInt() == expected) {
+                return true;
             }
         }
         return false;

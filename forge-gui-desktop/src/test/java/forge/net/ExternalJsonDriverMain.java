@@ -28,12 +28,20 @@ public final class ExternalJsonDriverMain {
         WAIT_RESOLUTION
     }
 
+    private enum Target {
+        CARD,
+        OPPONENT,
+        SELF
+    }
+
     private final Gson gson = new Gson();
     private final PrintWriter output = new PrintWriter(System.out, true, StandardCharsets.UTF_8);
     private final Set<Long> actedInteractions = new HashSet<>();
     private Stage stage = Stage.PREPARE_LAND;
+    private final Target target;
     private JsonObject state;
     private int bobId = -1;
+    private int aliceId = -1;
     private int boltId = -1;
     private int elvesId = -1;
     private int mountainId = -1;
@@ -43,11 +51,13 @@ public final class ExternalJsonDriverMain {
     private boolean stackReadyToPass;
     private JsonObject pendingAsyncCommand;
 
-    private ExternalJsonDriverMain() {
+    private ExternalJsonDriverMain(Target target) {
+        this.target = target;
     }
 
     public static void main(String[] args) throws Exception {
-        boolean complete = new ExternalJsonDriverMain().run();
+        Target target = args.length == 0 ? Target.CARD : Target.valueOf(args[0].toUpperCase());
+        boolean complete = new ExternalJsonDriverMain(target).run();
         System.exit(complete ? 0 : 1);
     }
 
@@ -66,7 +76,7 @@ public final class ExternalJsonDriverMain {
                     state = message;
                     indexState();
                     if (resolved()) {
-                        System.err.println("DRIVER_SUCCESS boltId=" + boltId + " targetId=" + elvesId
+                        System.err.println("DRIVER_SUCCESS boltId=" + boltId + " target=" + target
                                 + " landAbilityReply=" + landAbilityReplied
                                 + " abilityReply=" + abilityReplied);
                         return true;
@@ -108,6 +118,7 @@ public final class ExternalJsonDriverMain {
         }
         JsonObject alice = playerNamed("Alice (Host AI)");
         if (alice != null) {
+            aliceId = integer(alice, "id", aliceId);
             JsonObject elves = cardNamed(alice.getAsJsonArray("battlefield"), "Llanowar Elves");
             if (elves == null) {
                 elves = cardNamed(alice.getAsJsonArray("graveyard"), "Llanowar Elves");
@@ -121,12 +132,6 @@ public final class ExternalJsonDriverMain {
     private void handleInteraction(JsonObject interaction) {
         long sequence = interaction.get("interactionSequence").getAsLong();
         if (!actedInteractions.add(sequence)) {
-            return;
-        }
-
-        JsonArray playerIds = interaction.getAsJsonArray("selectablePlayerIds");
-        if (bobId >= 0 && contains(playerIds, bobId)) {
-            sendTracked(commandWithId("selectPlayer", "playerId", bobId, sequence));
             return;
         }
 
@@ -151,7 +156,21 @@ public final class ExternalJsonDriverMain {
         }
 
         JsonArray selectable = interaction.getAsJsonArray("selectableCardIds");
-        if (stage == Stage.WAIT_TARGET && actionableSnapshot && contains(selectable, elvesId)) {
+        JsonArray selectablePlayers = interaction.getAsJsonArray("selectablePlayerIds");
+        if (stage == Stage.WAIT_TARGET && actionableSnapshot && target == Target.SELF
+                && contains(selectablePlayers, bobId)) {
+            sendTracked(commandWithId("selectPlayer", "playerId", bobId, sequence));
+            stage = Stage.WAIT_MANA;
+            return;
+        }
+        if (stage == Stage.WAIT_TARGET && actionableSnapshot && target == Target.OPPONENT
+                && contains(selectablePlayers, aliceId)) {
+            sendTracked(commandWithId("selectPlayer", "playerId", aliceId, sequence));
+            stage = Stage.WAIT_MANA;
+            return;
+        }
+        if (stage == Stage.WAIT_TARGET && actionableSnapshot && target == Target.CARD
+                && contains(selectable, elvesId)) {
             sendTracked(commandWithId("selectCard", "cardId", elvesId, sequence));
             stage = Stage.WAIT_MANA;
             return;
@@ -251,7 +270,8 @@ public final class ExternalJsonDriverMain {
             JsonObject item = element.getAsJsonObject();
             JsonObject source = item.getAsJsonObject("source");
             if (source != null && "Lightning Bolt".equals(string(source, "name"))
-                    && cardNamed(item.getAsJsonArray("targets"), "Llanowar Elves") != null) {
+                    && (target != Target.CARD
+                            || cardNamed(item.getAsJsonArray("targets"), "Llanowar Elves") != null)) {
                 stackReadyToPass = true;
                 return;
             }
@@ -293,9 +313,16 @@ public final class ExternalJsonDriverMain {
             return false;
         }
         JsonObject alice = playerNamed("Alice (Host AI)");
-        return alice != null
-                && cardNamed(alice.getAsJsonArray("battlefield"), "Llanowar Elves") == null
+        JsonObject bob = playerNamed("Bob (JSON Driver)");
+        if (alice == null || bob == null) {
+            return false;
+        }
+        return switch (target) {
+        case CARD -> cardNamed(alice.getAsJsonArray("battlefield"), "Llanowar Elves") == null
                 && cardNamed(alice.getAsJsonArray("graveyard"), "Llanowar Elves") != null;
+        case OPPONENT -> integer(alice, "life", -1) == 17 && integer(bob, "life", -1) == 20;
+        case SELF -> integer(bob, "life", -1) == 17 && integer(alice, "life", -1) == 20;
+        };
     }
 
     private JsonObject playerNamed(String name) {

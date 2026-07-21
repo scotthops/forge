@@ -25,16 +25,15 @@ public partial class Main : Control
 	private BridgeProcessClient? bridge;
 	private Label statusLabel = null!;
 	private Label gameSummary = null!;
-	private Label opponentHeader = null!;
+	private Button opponentHeader = null!;
 	private FlowContainer opponentBattlefield = null!;
 	private FlowContainer opponentGraveyard = null!;
 	private Label stackText = null!;
-	private Label yourHeader = null!;
+	private Button yourHeader = null!;
 	private FlowContainer yourBattlefield = null!;
 	private FlowContainer yourHand = null!;
 	private FlowContainer yourGraveyard = null!;
 	private Label interactionText = null!;
-	private VBoxContainer playerChoices = null!;
 	private Button passPriorityButton = null!;
 	private Button okButton = null!;
 	private Button cancelButton = null!;
@@ -48,6 +47,7 @@ public partial class Main : Control
 	private string? launchFailure;
 	private readonly Dictionary<int, ObservedCardLocation> observedCardLocations = new();
 	private readonly Dictionary<int, ObservedStackItem> observedStack = new();
+	private readonly Dictionary<int, int> observedPlayerLives = new();
 	private bool g3StateInitialized;
 
 	public override void _Ready()
@@ -56,6 +56,8 @@ public partial class Main : Control
 		passPriorityButton.Pressed += OnPassPriority;
 		okButton.Pressed += () => OnButton(BridgeButton.Ok);
 		cancelButton.Pressed += () => OnButton(BridgeButton.Cancel);
+		opponentHeader.Pressed += () => OnPlayerPressed(opponentHeader);
+		yourHeader.Pressed += () => OnPlayerPressed(yourHeader);
 
 		bridge = new BridgeProcessClient();
 		string projectDirectory = ProjectSettings.GlobalizePath("res://");
@@ -123,16 +125,15 @@ public partial class Main : Control
 	{
 		statusLabel = GetNode<Label>("%ConnectionStatus");
 		gameSummary = GetNode<Label>("%GameSummary");
-		opponentHeader = GetNode<Label>("%OpponentHeader");
+		opponentHeader = GetNode<Button>("%OpponentHeader");
 		opponentBattlefield = GetNode<FlowContainer>("%OpponentBattlefield");
 		opponentGraveyard = GetNode<FlowContainer>("%OpponentGraveyard");
 		stackText = GetNode<Label>("%StackText");
-		yourHeader = GetNode<Label>("%YourHeader");
+		yourHeader = GetNode<Button>("%YourHeader");
 		yourBattlefield = GetNode<FlowContainer>("%YourBattlefield");
 		yourHand = GetNode<FlowContainer>("%YourHand");
 		yourGraveyard = GetNode<FlowContainer>("%YourGraveyard");
 		interactionText = GetNode<Label>("%InteractionText");
-		playerChoices = GetNode<VBoxContainer>("%PlayerChoices");
 		passPriorityButton = GetNode<Button>("%PassPriority");
 		okButton = GetNode<Button>("%OkButton");
 		cancelButton = GetNode<Button>("%CancelButton");
@@ -156,12 +157,8 @@ public partial class Main : Control
 		PlayerSnapshot? localPlayer = FindLocalPlayer(state);
 		PlayerSnapshot? opponent = state?.Players.FirstOrDefault(player => player.Id != localPlayer?.Id);
 		gameSummary.Text = FormatGameSummary(state);
-		yourHeader.Text = localPlayer == null
-			? "Your player: waiting for controller"
-			: $"You: {Value(localPlayer.Name)}  |  Life {localPlayer.Life}";
-		opponentHeader.Text = opponent == null
-			? "Opponent: waiting for state"
-			: $"Opponent: {Value(opponent.Name)}  |  Life {opponent.Life}";
+		RenderPlayerArea(yourHeader, "You", localPlayer, interaction);
+		RenderPlayerArea(opponentHeader, "Opponent", opponent, interaction);
 
 		RenderCardButtons(opponentBattlefield, opponent?.Battlefield ?? [], selectableCards,
 			interaction?.InteractionSequence);
@@ -176,7 +173,6 @@ public partial class Main : Control
 		stackText.Text = FormatStack(state?.Stack ?? []);
 
 		RenderInteraction(interaction, state, localPlayer);
-		RenderPlayerChoices(state, interaction);
 		RenderAbilityQuery(clientState.PendingQuery);
 		actionStatus.Text = clientState.LastActionStatus
 			?? clientState.LastError
@@ -227,6 +223,38 @@ public partial class Main : Control
 		SendAsyncCommand(new SelectCardCommand(cardId, interactionSequence));
 	}
 
+	private void RenderPlayerArea(Button area, string role, PlayerSnapshot? player,
+		InteractionMessage? interaction)
+	{
+		bool actionable = player != null
+			&& interaction != null
+			&& interaction.SelectablePlayerIds.Contains(player.Id)
+			&& CanSendAsync();
+		area.Text = player == null
+			? $"{role}: waiting for state"
+			: $"{role}: {Value(player.Name)}  |  Life {player.Life}{(actionable ? "  READY" : "")}";
+		area.Disabled = !actionable;
+		area.Modulate = actionable ? new Color(0.72f, 1f, 0.78f) : new Color(0.68f, 0.7f, 0.73f);
+		area.TooltipText = actionable && player != null
+			? $"Forge selectable player | id={player.Id}"
+			: player == null ? string.Empty : $"Player id={player.Id}";
+		area.SetMeta("player_id", player?.Id ?? -1);
+	}
+
+	private void OnPlayerPressed(Button area)
+	{
+		InteractionMessage? interaction = clientState.CurrentInteraction;
+		int playerId = area.GetMeta("player_id").AsInt32();
+		if (interaction == null || !interaction.SelectablePlayerIds.Contains(playerId))
+		{
+			actionStatus.Text = "That player is no longer offered by Forge. Choose again.";
+			return;
+		}
+		GD.Print($"G3 CLICK playerId={playerId} interactionSequence={interaction.InteractionSequence} "
+			+ $"prompt=\"{CurrentPrompt()}\"");
+		SendAsyncCommand(new SelectPlayerCommand(playerId, interaction.InteractionSequence));
+	}
+
 	private void RenderInteraction(InteractionMessage? interaction, StateMessage? state,
 		PlayerSnapshot? localPlayer)
 	{
@@ -242,6 +270,7 @@ public partial class Main : Control
 		interactionText.Text = $"Interaction {interaction.InteractionSequence} ({Value(interaction.Reason)})\n"
 			+ $"{Value(interaction.Prompt)}\n"
 			+ $"Selectable cards: [{string.Join(", ", interaction.SelectableCardIds)}]  "
+			+ $"Players: [{string.Join(", ", interaction.SelectablePlayerIds)}]  "
 			+ $"Weak: [{string.Join(", ", interaction.WeaklySelectableCardIds)}]";
 		bool canSend = CanSendAsync();
 		okButton.Text = Value(interaction.Buttons.OkLabel);
@@ -251,30 +280,6 @@ public partial class Main : Control
 		passPriorityButton.Disabled = !canSend || localPlayer == null
 			|| state?.PriorityPlayerId != localPlayer.Id
 			|| !string.Equals(interaction.Reason, "buttons", StringComparison.Ordinal);
-	}
-
-	private void RenderPlayerChoices(StateMessage? state, InteractionMessage? interaction)
-	{
-		ClearChildren(playerChoices);
-		if (state == null || interaction == null || interaction.SelectablePlayerIds.Count == 0)
-		{
-			playerChoices.Visible = false;
-			return;
-		}
-
-		playerChoices.Visible = true;
-		foreach (int playerId in interaction.SelectablePlayerIds)
-		{
-			PlayerSnapshot? player = state.Players.FirstOrDefault(candidate => candidate.Id == playerId);
-			Button button = new()
-			{
-				Text = $"Select player: {Value(player?.Name)} [#{playerId}]",
-				Disabled = !CanSendAsync()
-			};
-			long sequence = interaction.InteractionSequence;
-			button.Pressed += () => SendAsyncCommand(new SelectPlayerCommand(playerId, sequence));
-			playerChoices.AddChild(button);
-		}
 	}
 
 	private void RenderAbilityQuery(QueryMessage? query)
@@ -477,7 +482,14 @@ public partial class Main : Control
 
 	private void LogG3Observation(BridgeMessage message)
 	{
-		if (message is QueryMessage query)
+		if (message is InteractionMessage interaction)
+		{
+			GD.Print($"G3 SELECTABLES callback={Value(interaction.Reason)} "
+				+ $"interactionSequence={interaction.InteractionSequence} "
+				+ $"selectableCardIds=[{string.Join(",", interaction.SelectableCardIds)}] "
+				+ $"selectablePlayerIds=[{string.Join(",", interaction.SelectablePlayerIds)}]");
+		}
+		else if (message is QueryMessage query)
 		{
 			string choices = string.Join(" | ", query.Choices.Select(choice =>
 				$"{choice.Id}:{Value(choice.Description)} canPlay={choice.CanPlay}"));
@@ -496,6 +508,14 @@ public partial class Main : Control
 		Dictionary<int, ObservedCardLocation> currentCards = new();
 		foreach (PlayerSnapshot player in state.Players)
 		{
+			if (observedPlayerLives.TryGetValue(player.Id, out int previousLife)
+				&& previousLife != player.Life)
+			{
+				GD.Print($"G3 LIFE playerId={player.Id} name=\"{Value(player.Name)}\" "
+					+ $"from={previousLife} to={player.Life} delta={player.Life - previousLife} "
+					+ $"stateSequence={state.StateSequence}");
+			}
+			observedPlayerLives[player.Id] = player.Life;
 			IndexCards(currentCards, player, player.HandVisible, "Hand");
 			IndexCards(currentCards, player, player.Battlefield, "Battlefield");
 			IndexCards(currentCards, player, player.Graveyard, "Graveyard");
