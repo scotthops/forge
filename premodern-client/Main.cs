@@ -307,7 +307,7 @@ public partial class Main : Control
 			{
 				Text = $"{Value(choice.Description)}  [#{choice.Id}]",
 				Disabled = !choice.CanPlay,
-				TooltipText = choice.CanPlay ? "Reply with this offered ability" : "Forge reports this ability cannot play"
+				TooltipText = choice.CanPlay ? "Reply with this Forge-offered choice" : "Forge reports this choice is unavailable"
 			};
 			string requestId = query.RequestId ?? string.Empty;
 			int selectedId = choice.Id;

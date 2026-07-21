@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import forge.game.card.CardView;
 import forge.game.spellability.SpellAbilityView;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,7 +36,7 @@ final class BridgeProtocol implements AutoCloseable {
     private final Gson gson = new Gson();
     private final AtomicLong requestIds = new AtomicLong();
     private final AtomicLong interactionSequences = new AtomicLong();
-    private final Map<String, PendingAbilityQuery> pendingAbilityQueries = new ConcurrentHashMap<>();
+    private final Map<String, PendingChoiceQuery<?>> pendingChoiceQueries = new ConcurrentHashMap<>();
     private Consumer<Command> actionHandler;
 
     BridgeProtocol(JsonLineTransport transport, BridgeGuiBase guiBase) {
@@ -82,7 +83,6 @@ final class BridgeProtocol implements AutoCloseable {
     }
 
     SpellAbilityView queryAbility(CardView hostCard, List<SpellAbilityView> offered) {
-        String requestId = "q-" + requestIds.incrementAndGet();
         Map<Integer, SpellAbilityView> choices = new LinkedHashMap<>();
         List<AbilityChoice> outputChoices = offered.stream()
                 .map(ability -> {
@@ -90,24 +90,52 @@ final class BridgeProtocol implements AutoCloseable {
                     return new AbilityChoice(ability.getId(), clean(ability.getDescription()), ability.canPlay());
                 })
                 .toList();
-        PendingAbilityQuery pending = new PendingAbilityQuery(choices, new CompletableFuture<>());
-        pendingAbilityQueries.put(requestId, pending);
-        send(new AbilityQueryMessage("query", requestId, "abilityChoice",
+        return queryChoice("abilityChoice", hostCard, choices, outputChoices,
+                "synchronous ability choice");
+    }
+
+    Map<CardView, Integer> queryCombatDamage(CardView attacker, List<CardView> blockers,
+            int damage) {
+        if (damage <= 0) {
+            return Collections.emptyMap();
+        }
+        if (blockers == null || blockers.isEmpty()) {
+            Map<CardView, Integer> assignment = new LinkedHashMap<>();
+            assignment.put(null, damage);
+            return assignment;
+        }
+
+        CardView firstBlocker = blockers.get(0);
+        Map<CardView, Integer> assignment = Map.of(firstBlocker, damage);
+        String description = "Assign all " + damage + " combat damage to "
+                + clean(firstBlocker.getName());
+        return queryChoice("combatDamageAssignment", attacker,
+                Map.of(0, assignment),
+                List.of(new AbilityChoice(0, description, true)),
+                "combat damage assignment");
+    }
+
+    private <T> T queryChoice(String kind, CardView hostCard, Map<Integer, T> choices,
+            List<AbilityChoice> outputChoices, String description) {
+        String requestId = "q-" + requestIds.incrementAndGet();
+        PendingChoiceQuery<T> pending = new PendingChoiceQuery<>(choices, new CompletableFuture<>());
+        pendingChoiceQueries.put(requestId, pending);
+        send(new AbilityQueryMessage("query", requestId, kind,
                 hostCard == null ? null : hostCard.getId(),
                 hostCard == null ? null : clean(hostCard.getName()), outputChoices));
 
         try {
             return pending.reply().get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (TimeoutException e) {
-            error("queryTimeout", "No reply received for synchronous ability choice", requestId);
+            error("queryTimeout", "No reply received for " + description, requestId);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            error("queryInterrupted", "Synchronous ability choice was interrupted", requestId);
+            error("queryInterrupted", description + " was interrupted", requestId);
         } catch (ExecutionException e) {
             error("queryCancelled", clean(e.getCause() == null ? e.getMessage() : e.getCause().getMessage()),
                     requestId);
         } finally {
-            pendingAbilityQueries.remove(requestId, pending);
+            pendingChoiceQueries.remove(requestId, pending);
         }
         return null;
     }
@@ -188,18 +216,23 @@ final class BridgeProtocol implements AutoCloseable {
             error("invalidMessage", "Reply is missing string field 'requestId'", null);
             return;
         }
-        PendingAbilityQuery pending = pendingAbilityQueries.get(requestId);
+        PendingChoiceQuery<?> pending = pendingChoiceQueries.get(requestId);
         if (pending == null) {
             error("staleRequestId", "No pending query has this requestId", requestId);
             return;
         }
         Integer selectedId = integerField(input, "selectedId");
-        SpellAbilityView selected = selectedId == null ? null : pending.choices().get(selectedId);
+        Object selected = selectedId == null ? null : pending.choices().get(selectedId);
         if (selected == null) {
             error("invalidQueryChoice", "selectedId is not one of the offered choices", requestId);
             return;
         }
-        pending.reply().complete(selected);
+        completePending(pending, selected);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> void completePending(PendingChoiceQuery<T> pending, Object selected) {
+        pending.reply().complete((T) selected);
     }
 
     private static String stringField(JsonObject input, String name) {
@@ -238,13 +271,12 @@ final class BridgeProtocol implements AutoCloseable {
 
     @Override
     public void close() {
-        pendingAbilityQueries.forEach((requestId, pending) ->
+        pendingChoiceQueries.forEach((requestId, pending) ->
                 pending.reply().completeExceptionally(new IllegalStateException("Bridge protocol closed")));
-        pendingAbilityQueries.clear();
+        pendingChoiceQueries.clear();
     }
 
-    private record PendingAbilityQuery(Map<Integer, SpellAbilityView> choices,
-                                       CompletableFuture<SpellAbilityView> reply) { }
+    private record PendingChoiceQuery<T>(Map<Integer, T> choices, CompletableFuture<T> reply) { }
 
     private record LifecycleMessage(String type, String event, String detail) { }
 

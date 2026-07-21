@@ -278,7 +278,8 @@ public final class BridgeGuiGame extends NetworkGuiGame {
     @Override
     public Map<CardView, Integer> assignCombatDamage(CardView attacker, List<CardView> blockers,
             int damage, GameEntityView defender, boolean overrideOrder, boolean maySkip) {
-        throw unsupported("assignCombatDamage", blockers);
+        listener.interactionObserved();
+        return protocol.queryCombatDamage(attacker, blockers, damage);
     }
 
     @Override
