@@ -38,6 +38,7 @@ public partial class Main : Control
 	private Label opponentPriorityIndicator = null!;
 	private Label yourTurnIndicator = null!;
 	private Label yourPriorityIndicator = null!;
+	private PanelContainer currentActionPanel = null!;
 	private Label interactionText = null!;
 	private Button passPriorityButton = null!;
 	private Button okButton = null!;
@@ -146,6 +147,7 @@ public partial class Main : Control
 		opponentPriorityIndicator = GetNode<Label>("%OpponentPriorityIndicator");
 		yourTurnIndicator = GetNode<Label>("%YourTurnIndicator");
 		yourPriorityIndicator = GetNode<Label>("%YourPriorityIndicator");
+		currentActionPanel = GetNode<PanelContainer>("%CurrentActionPanel");
 		interactionText = GetNode<Label>("%InteractionText");
 		passPriorityButton = GetNode<Button>("%PassPriority");
 		okButton = GetNode<Button>("%OkButton");
@@ -319,18 +321,17 @@ public partial class Main : Control
 	{
 		if (interaction == null)
 		{
-			interactionText.Text = "Waiting for Forge interaction...";
+			currentActionPanel.Visible = false;
+			interactionText.Text = string.Empty;
 			passPriorityButton.Disabled = true;
 			okButton.Disabled = true;
 			cancelButton.Disabled = true;
 			return;
 		}
 
-		interactionText.Text = $"Interaction {interaction.InteractionSequence} ({Value(interaction.Reason)})\n"
-			+ $"{Value(interaction.Prompt)}\n"
-			+ $"Selectable cards: [{string.Join(", ", interaction.SelectableCardIds)}]  "
-			+ $"Players: [{string.Join(", ", interaction.SelectablePlayerIds)}]  "
-			+ $"Weak: [{string.Join(", ", interaction.WeaklySelectableCardIds)}]";
+		string? currentAction = PlayerFacingPrompt(interaction.Prompt, state, localPlayer);
+		currentActionPanel.Visible = currentAction != null;
+		interactionText.Text = currentAction ?? string.Empty;
 		bool canSend = CanSendAsync();
 		okButton.Text = Value(interaction.Buttons.OkLabel);
 		cancelButton.Text = Value(interaction.Buttons.CancelLabel);
@@ -339,6 +340,44 @@ public partial class Main : Control
 		passPriorityButton.Disabled = !canSend || localPlayer == null
 			|| state?.PriorityPlayerId != localPlayer.Id
 			|| !string.Equals(interaction.Reason, "buttons", StringComparison.Ordinal);
+	}
+
+	private static string? PlayerFacingPrompt(string? prompt, StateMessage? state,
+		PlayerSnapshot? localPlayer)
+	{
+		if (string.IsNullOrWhiteSpace(prompt))
+		{
+			return null;
+		}
+
+		string trimmed = prompt.Trim();
+		if (IsRoutinePriorityStatus(trimmed))
+		{
+			return null;
+		}
+
+		if (state != null)
+		{
+			foreach (PlayerSnapshot player in state.Players)
+			{
+				if (!string.IsNullOrWhiteSpace(player.Name))
+				{
+					string friendlyName = player.Id == localPlayer?.Id ? "You" : "Opponent";
+					trimmed = trimmed.Replace(player.Name, friendlyName,
+						StringComparison.Ordinal);
+				}
+			}
+		}
+
+		return trimmed;
+	}
+
+	private static bool IsRoutinePriorityStatus(string prompt)
+	{
+		return prompt.StartsWith("Priority:", StringComparison.OrdinalIgnoreCase)
+			&& prompt.Contains(" Turn:", StringComparison.OrdinalIgnoreCase)
+			&& prompt.Contains(" Phase:", StringComparison.OrdinalIgnoreCase)
+			&& prompt.Contains(" Stack:", StringComparison.OrdinalIgnoreCase);
 	}
 
 	private void RenderAbilityQuery(QueryMessage? query)

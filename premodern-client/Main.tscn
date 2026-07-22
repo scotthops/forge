@@ -391,17 +391,28 @@ text = "Right-click a visible card"
 horizontal_alignment = 1
 autowrap_mode = 2
 
-[node name="InteractionSeparator" type="HSeparator" parent="Margin/Layout"]
-layout_mode = 2
-
-[node name="InteractionText" type="Label" parent="Margin/Layout"]
+[node name="CurrentActionPanel" type="PanelContainer" parent="Margin/Layout"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 68)
+visible = false
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_prompt")
+
+[node name="CurrentActionLayout" type="VBoxContainer" parent="Margin/Layout/CurrentActionPanel"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="CurrentActionHeading" type="Label" parent="Margin/Layout/CurrentActionPanel/CurrentActionLayout"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.48, 0.83, 0.63, 1)
+theme_override_font_sizes/font_size = 13
+text = "CURRENT ACTION"
+
+[node name="InteractionText" type="Label" parent="Margin/Layout/CurrentActionPanel/CurrentActionLayout"]
+unique_name_in_owner = true
 layout_mode = 2
 theme_override_colors/font_color = Color(0.92, 0.95, 0.93, 1)
-theme_override_font_sizes/font_size = 16
-theme_override_styles/normal = SubResource("StyleBoxFlat_prompt")
-text = "Waiting for Forge interaction..."
+theme_override_font_sizes/font_size = 17
+text = ""
 autowrap_mode = 2
 
 [node name="PlayerChoices" type="VBoxContainer" parent="Margin/Layout"]
