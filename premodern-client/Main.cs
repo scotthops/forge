@@ -1,6 +1,7 @@
 #nullable enable
 
 using Godot;
+using PremodernClient;
 using PremodernClient.Bridge;
 using PremodernClient.Protocol;
 using System;
@@ -41,6 +42,9 @@ public partial class Main : Control
 	private PanelContainer abilityPanel = null!;
 	private Label abilityTitle = null!;
 	private VBoxContainer abilityChoices = null!;
+	private TextureRect cardPreview = null!;
+	private Label cardPreviewName = null!;
+	private CardImageCatalog cardImages = null!;
 	private long renderedInteractionSequence;
 	private bool stateObserved;
 	private bool interactionObserved;
@@ -53,6 +57,7 @@ public partial class Main : Control
 	public override void _Ready()
 	{
 		BindSceneNodes();
+		cardImages = new CardImageCatalog("res://card-images/sligh");
 		passPriorityButton.Pressed += OnPassPriority;
 		okButton.Pressed += () => OnButton(BridgeButton.Ok);
 		cancelButton.Pressed += () => OnButton(BridgeButton.Cancel);
@@ -141,6 +146,8 @@ public partial class Main : Control
 		abilityPanel = GetNode<PanelContainer>("%AbilityPanel");
 		abilityTitle = GetNode<Label>("%AbilityTitle");
 		abilityChoices = GetNode<VBoxContainer>("%AbilityChoices");
+		cardPreview = GetNode<TextureRect>("%CardPreview");
+		cardPreviewName = GetNode<Label>("%CardPreviewName");
 	}
 
 	private void RenderUi()
@@ -194,16 +201,21 @@ public partial class Main : Control
 			bool actionable = interactionSequence != null
 				&& selectableIds.Contains(card.Id)
 				&& CanSendAsync();
+			PanelContainer cardControl = new()
+			{
+				CustomMinimumSize = new Vector2(150, 52),
+				MouseFilter = MouseFilterEnum.Stop
+			};
 			Button button = new()
 			{
 				Text = actionable
 					? $"{CardName(card)}\n#{card.Id}  READY"
 					: $"{CardName(card)}\n#{card.Id}",
-				CustomMinimumSize = new Vector2(150, 52),
 				TooltipText = actionable
 					? $"Forge selectable | {Value(card.Zone)} | id={card.Id}"
 					: $"{Value(card.Zone)} | id={card.Id}",
 				Disabled = !actionable,
+				MouseFilter = MouseFilterEnum.Pass,
 				Modulate = actionable ? new Color(0.72f, 1f, 0.78f) : new Color(0.68f, 0.7f, 0.73f)
 			};
 			button.AddThemeColorOverride("font_color", new Color(0.08f, 0.13f, 0.1f));
@@ -212,8 +224,36 @@ public partial class Main : Control
 			int cardId = card.Id;
 			long sequence = interactionSequence ?? 0;
 			button.Pressed += () => OnCardPressed(card, cardId, sequence);
-			container.AddChild(button);
+			cardControl.GuiInput += inputEvent => OnCardGuiInput(cardControl, card, inputEvent);
+			cardControl.AddChild(button);
+			container.AddChild(cardControl);
 		}
+	}
+
+	private void OnCardGuiInput(Control cardControl, CardSnapshot card, InputEvent inputEvent)
+	{
+		if (inputEvent is not InputEventMouseButton mouseButton
+			|| mouseButton.ButtonIndex != MouseButton.Right
+			|| !mouseButton.Pressed)
+		{
+			return;
+		}
+
+		cardControl.AcceptEvent();
+		if (card.Hidden || string.IsNullOrWhiteSpace(card.Name))
+		{
+			return;
+		}
+
+		cardPreviewName.Text = card.Name;
+		if (cardImages.TryGetTexture(card.Name, out Texture2D texture))
+		{
+			cardPreview.Texture = texture;
+			return;
+		}
+
+		cardPreview.Texture = null;
+		cardPreviewName.Text = $"{card.Name}\nPreview image unavailable";
 	}
 
 	private void OnCardPressed(CardSnapshot card, int cardId, long interactionSequence)

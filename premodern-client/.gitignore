@@ -1,3 +1,7 @@
 # Godot 4+ specific ignores
 .godot/
 /android/
+
+# Local card artwork
+card-images/**/*.webp
+card-images/**/*.webp.import
