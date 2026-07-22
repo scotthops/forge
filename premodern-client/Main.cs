@@ -34,6 +34,10 @@ public partial class Main : Control
 	private FlowContainer yourBattlefield = null!;
 	private FlowContainer yourHand = null!;
 	private FlowContainer yourGraveyard = null!;
+	private Label opponentTurnIndicator = null!;
+	private Label opponentPriorityIndicator = null!;
+	private Label yourTurnIndicator = null!;
+	private Label yourPriorityIndicator = null!;
 	private Label interactionText = null!;
 	private Button passPriorityButton = null!;
 	private Button okButton = null!;
@@ -138,6 +142,10 @@ public partial class Main : Control
 		yourBattlefield = GetNode<FlowContainer>("%YourBattlefield");
 		yourHand = GetNode<FlowContainer>("%YourHand");
 		yourGraveyard = GetNode<FlowContainer>("%YourGraveyard");
+		opponentTurnIndicator = GetNode<Label>("%OpponentTurnIndicator");
+		opponentPriorityIndicator = GetNode<Label>("%OpponentPriorityIndicator");
+		yourTurnIndicator = GetNode<Label>("%YourTurnIndicator");
+		yourPriorityIndicator = GetNode<Label>("%YourPriorityIndicator");
 		interactionText = GetNode<Label>("%InteractionText");
 		passPriorityButton = GetNode<Button>("%PassPriority");
 		okButton = GetNode<Button>("%OkButton");
@@ -166,6 +174,8 @@ public partial class Main : Control
 		gameSummary.Text = FormatGameSummary(state);
 		RenderPlayerArea(yourHeader, "You", localPlayer, interaction);
 		RenderPlayerArea(opponentHeader, "Opponent", opponent, interaction);
+		RenderPlayerIndicators(localPlayer, state, yourTurnIndicator, yourPriorityIndicator);
+		RenderPlayerIndicators(opponent, state, opponentTurnIndicator, opponentPriorityIndicator);
 
 		RenderCardButtons(opponentBattlefield, opponent?.Battlefield ?? [], selectableCards,
 			interaction?.InteractionSequence);
@@ -272,13 +282,22 @@ public partial class Main : Control
 			&& CanSendAsync();
 		area.Text = player == null
 			? $"{role}: waiting for state"
-			: $"{role}: {Value(player.Name)}  |  Life {player.Life}{(actionable ? "  READY" : "")}";
+			: $"{role.ToUpperInvariant()}    Life: {player.Life}    Hand: {player.HandCount}"
+				+ (actionable ? "    READY" : "");
 		area.Disabled = !actionable;
 		area.Modulate = actionable ? new Color(0.72f, 1f, 0.78f) : new Color(0.68f, 0.7f, 0.73f);
-		area.TooltipText = actionable && player != null
-			? $"Forge selectable player | id={player.Id}"
-			: player == null ? string.Empty : $"Player id={player.Id}";
+		area.TooltipText = player == null
+			? string.Empty
+			: $"Forge player: {Value(player.Name)} | id={player.Id}"
+				+ (actionable ? " | selectable" : string.Empty);
 		area.SetMeta("player_id", player?.Id ?? -1);
+	}
+
+	private static void RenderPlayerIndicators(PlayerSnapshot? player, StateMessage? state,
+		Label turnIndicator, Label priorityIndicator)
+	{
+		turnIndicator.Visible = player != null && state?.ActivePlayerId == player.Id;
+		priorityIndicator.Visible = player != null && state?.PriorityPlayerId == player.Id;
 	}
 
 	private void OnPlayerPressed(Button area)
@@ -437,8 +456,17 @@ public partial class Main : Control
 		return state == null
 			? "Waiting for authoritative game state..."
 			: $"Turn {state.Turn}  |  Phase {Value(state.Phase)}  |  "
-				+ $"Active {PlayerName(state, state.ActivePlayerId)}  |  "
-				+ $"Priority {PlayerName(state, state.PriorityPlayerId)}  |  State {state.StateSequence}";
+				+ $"Active {PlayerRole(state.ActivePlayerId)}  |  "
+				+ $"Priority {PlayerRole(state.PriorityPlayerId)}  |  State {state.StateSequence}";
+	}
+
+	private string PlayerRole(int? playerId)
+	{
+		if (playerId == null)
+		{
+			return "-";
+		}
+		return clientState.Controller?.PlayerId == playerId ? "You" : "Opponent";
 	}
 
 	private static string FormatStack(IReadOnlyList<StackSnapshot> stack)
@@ -472,16 +500,6 @@ public partial class Main : Control
 	private static Label EmptyLabel(string text = "(empty)")
 	{
 		return new Label { Text = text, Modulate = new Color(0.62f, 0.65f, 0.68f) };
-	}
-
-	private static string PlayerName(StateMessage state, int? id)
-	{
-		if (id == null)
-		{
-			return "-";
-		}
-		PlayerSnapshot? player = state.Players.FirstOrDefault(candidate => candidate.Id == id.Value);
-		return player == null ? $"#{id}" : Value(player.Name);
 	}
 
 	private static string CardName(CardSnapshot card)

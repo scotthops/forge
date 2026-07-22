@@ -100,6 +100,7 @@ final class BridgePrinter {
                         clean(player.getName()),
                         player.getLife(),
                         player.getHasPriority(),
+                        player.getHand() == null ? 0 : player.getHand().size(),
                         snapshotCards(player.getHand(), localPlayers, true),
                         snapshotCards(player.getBattlefield(), localPlayers, false),
                         snapshotCards(player.getGraveyard(), localPlayers, false)));
@@ -175,7 +176,7 @@ final class BridgePrinter {
                                 Integer activePlayerId, Integer priorityPlayerId,
                                 List<PlayerSnapshot> players, List<StackSnapshot> stack) { }
 
-    private record PlayerSnapshot(int id, String name, int life, boolean hasPriority,
+    private record PlayerSnapshot(int id, String name, int life, boolean hasPriority, int handCount,
                                   List<CardSnapshot> handVisible,
                                   List<CardSnapshot> battlefield,
                                   List<CardSnapshot> graveyard) { }

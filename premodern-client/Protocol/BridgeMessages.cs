@@ -39,6 +39,7 @@ public sealed record PlayerSnapshot(
     string? Name,
     int Life,
     bool HasPriority,
+    int HandCount,
     IReadOnlyList<CardSnapshot> HandVisible,
     IReadOnlyList<CardSnapshot> Battlefield,
     IReadOnlyList<CardSnapshot> Graveyard);

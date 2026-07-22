@@ -74,6 +74,7 @@ public static class BridgeProtocolParser
                 String(player, "name"),
                 Int32(player, "life"),
                 Boolean(player, "hasPriority"),
+                Int32(player, "handCount"),
                 ParseCards(player, "handVisible"),
                 ParseCards(player, "battlefield"),
                 ParseCards(player, "graveyard")));
