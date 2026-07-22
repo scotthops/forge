@@ -140,13 +140,6 @@ text = "Starting bridge..."
 horizontal_alignment = 2
 autowrap_mode = 2
 
-[node name="GameSummary" type="Label" parent="Margin/Layout"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_colors/font_color = Color(0.72, 0.76, 0.8, 1)
-text = "Waiting for authoritative game state..."
-autowrap_mode = 2
-
 [node name="Separator" type="HSeparator" parent="Margin/Layout"]
 layout_mode = 2
 
@@ -250,6 +243,28 @@ theme_override_constants/margin_bottom = 12
 [node name="StackLayout" type="VBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin"]
 layout_mode = 2
 theme_override_constants/separation = 7
+
+[node name="TurnPhaseRow" type="HBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin/StackLayout"]
+layout_mode = 2
+alignment = 1
+theme_override_constants/separation = 24
+
+[node name="StackTurnText" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin/StackLayout/TurnPhaseRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.55, 0.88, 0.95, 1)
+theme_override_font_sizes/font_size = 17
+text = "TURN —"
+
+[node name="StackPhaseText" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin/StackLayout/TurnPhaseRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.83, 0.86, 0.9, 1)
+theme_override_font_sizes/font_size = 17
+text = "PHASE —"
+
+[node name="StackContextSeparator" type="HSeparator" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin/StackLayout"]
+layout_mode = 2
 
 [node name="StackHeading" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin/StackLayout"]
 layout_mode = 2

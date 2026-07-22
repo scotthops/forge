@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 
 public partial class Main : Control
 {
@@ -23,12 +24,16 @@ public partial class Main : Control
 	[Export] public string Username { get; set; } = "Godot Bridge Client";
 
 	private readonly BridgeClientState clientState = new();
+	private static readonly Regex LondonMulliganPrompt = new(
+		@"^Return\s+(?<remaining>\d+)\s+card\(s\)\s+to the bottom of your library\.?$",
+		RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 	private BridgeProcessClient? bridge;
 	private Label statusLabel = null!;
-	private Label gameSummary = null!;
 	private Button opponentHeader = null!;
 	private FlowContainer opponentBattlefield = null!;
 	private FlowContainer opponentGraveyard = null!;
+	private Label stackTurnText = null!;
+	private Label stackPhaseText = null!;
 	private Label stackText = null!;
 	private Button yourHeader = null!;
 	private FlowContainer yourBattlefield = null!;
@@ -134,10 +139,11 @@ public partial class Main : Control
 	private void BindSceneNodes()
 	{
 		statusLabel = GetNode<Label>("%ConnectionStatus");
-		gameSummary = GetNode<Label>("%GameSummary");
 		opponentHeader = GetNode<Button>("%OpponentHeader");
 		opponentBattlefield = GetNode<FlowContainer>("%OpponentBattlefield");
 		opponentGraveyard = GetNode<FlowContainer>("%OpponentGraveyard");
+		stackTurnText = GetNode<Label>("%StackTurnText");
+		stackPhaseText = GetNode<Label>("%StackPhaseText");
 		stackText = GetNode<Label>("%StackText");
 		yourHeader = GetNode<Button>("%YourHeader");
 		yourBattlefield = GetNode<FlowContainer>("%YourBattlefield");
@@ -173,11 +179,11 @@ public partial class Main : Control
 
 		PlayerSnapshot? localPlayer = FindLocalPlayer(state);
 		PlayerSnapshot? opponent = state?.Players.FirstOrDefault(player => player.Id != localPlayer?.Id);
-		gameSummary.Text = FormatGameSummary(state);
-		RenderPlayerArea(yourHeader, "You", localPlayer, interaction);
-		RenderPlayerArea(opponentHeader, "Opponent", opponent, interaction);
+		RenderPlayerArea(yourHeader, "You", localPlayer, interaction, true);
+		RenderPlayerArea(opponentHeader, "Opponent", opponent, interaction, false);
 		RenderPlayerIndicators(localPlayer, state, yourTurnIndicator, yourPriorityIndicator);
 		RenderPlayerIndicators(opponent, state, opponentTurnIndicator, opponentPriorityIndicator);
+		RenderTurnAndPhase(state);
 
 		RenderCardButtons(opponentBattlefield, opponent?.Battlefield ?? [], selectableCards,
 			interaction?.InteractionSequence);
@@ -276,7 +282,7 @@ public partial class Main : Control
 	}
 
 	private void RenderPlayerArea(Button area, string role, PlayerSnapshot? player,
-		InteractionMessage? interaction)
+		InteractionMessage? interaction, bool isLocal)
 	{
 		bool actionable = player != null
 			&& interaction != null
@@ -284,7 +290,7 @@ public partial class Main : Control
 			&& CanSendAsync();
 		area.Text = player == null
 			? $"{role}: waiting for state"
-			: $"{role.ToUpperInvariant()}    Life: {player.Life}    Hand: {player.HandCount}"
+			: $"{role.ToUpperInvariant()}    Life: {player.Life}    Hand: {DisplayedHandCount(player, isLocal)}"
 				+ (actionable ? "    READY" : "");
 		area.Disabled = !actionable;
 		area.Modulate = actionable ? new Color(0.72f, 1f, 0.78f) : new Color(0.68f, 0.7f, 0.73f);
@@ -293,6 +299,18 @@ public partial class Main : Control
 			: $"Forge player: {Value(player.Name)} | id={player.Id}"
 				+ (actionable ? " | selectable" : string.Empty);
 		area.SetMeta("player_id", player?.Id ?? -1);
+	}
+
+	private static string DisplayedHandCount(PlayerSnapshot player, bool isLocal)
+	{
+		return player.HandCount?.ToString()
+			?? (isLocal ? player.HandVisible.Count.ToString() : "?");
+	}
+
+	private void RenderTurnAndPhase(StateMessage? state)
+	{
+		stackTurnText.Text = state == null ? "TURN —" : $"TURN {state.Turn}";
+		stackPhaseText.Text = state == null ? "PHASE —" : $"PHASE  {FormatPhase(state.Phase)}";
 	}
 
 	private static void RenderPlayerIndicators(PlayerSnapshot? player, StateMessage? state,
@@ -329,7 +347,7 @@ public partial class Main : Control
 			return;
 		}
 
-		string? currentAction = PlayerFacingPrompt(interaction.Prompt, state, localPlayer);
+		string? currentAction = PlayerFacingPrompt(interaction, state, localPlayer);
 		currentActionPanel.Visible = currentAction != null;
 		interactionText.Text = currentAction ?? string.Empty;
 		bool canSend = CanSendAsync();
@@ -342,18 +360,32 @@ public partial class Main : Control
 			|| !string.Equals(interaction.Reason, "buttons", StringComparison.Ordinal);
 	}
 
-	private static string? PlayerFacingPrompt(string? prompt, StateMessage? state,
+	private static string? PlayerFacingPrompt(InteractionMessage interaction, StateMessage? state,
 		PlayerSnapshot? localPlayer)
 	{
-		if (string.IsNullOrWhiteSpace(prompt))
+		if (string.IsNullOrWhiteSpace(interaction.Prompt))
 		{
 			return null;
 		}
 
-		string trimmed = prompt.Trim();
+		string trimmed = interaction.Prompt.Trim();
 		if (IsRoutinePriorityStatus(trimmed))
 		{
 			return null;
+		}
+
+		Match mulligan = LondonMulliganPrompt.Match(trimmed);
+		if (mulligan.Success
+			&& int.TryParse(mulligan.Groups["remaining"].Value, out int remaining))
+		{
+			if (remaining > 0)
+			{
+				return $"Select {remaining} {(remaining == 1 ? "card" : "cards")} "
+					+ "to put on the bottom of your library.";
+			}
+
+			string selectedCards = interaction.Max == 1 ? "card" : "cards";
+			return $"Send the selected {selectedCards} to the bottom of your library?";
 		}
 
 		if (state != null)
@@ -490,22 +522,29 @@ public partial class Main : Control
 			: state.Players.FirstOrDefault(player => player.Id == playerId.Value);
 	}
 
-	private string FormatGameSummary(StateMessage? state)
+	private static string FormatPhase(string? phase)
 	{
-		return state == null
-			? "Waiting for authoritative game state..."
-			: $"Turn {state.Turn}  |  Phase {Value(state.Phase)}  |  "
-				+ $"Active {PlayerRole(state.ActivePlayerId)}  |  "
-				+ $"Priority {PlayerRole(state.PriorityPlayerId)}  |  State {state.StateSequence}";
+		if (string.IsNullOrWhiteSpace(phase))
+		{
+			return "—";
+		}
+
+		string normalized = phase.ToUpperInvariant();
+		return normalized switch
+		{
+			"MAIN1" => "Main phase — precombat",
+			"MAIN2" => "Main phase — postcombat",
+			"END_OF_TURN" => "End step",
+			_ when normalized.StartsWith("COMBAT_", StringComparison.Ordinal) =>
+				$"Combat — {TitleWords(normalized[7..])}",
+			_ => TitleWords(normalized)
+		};
 	}
 
-	private string PlayerRole(int? playerId)
+	private static string TitleWords(string value)
 	{
-		if (playerId == null)
-		{
-			return "-";
-		}
-		return clientState.Controller?.PlayerId == playerId ? "You" : "Opponent";
+		return string.Join(" ", value.Split('_', StringSplitOptions.RemoveEmptyEntries)
+			.Select(word => char.ToUpperInvariant(word[0]) + word[1..].ToLowerInvariant()));
 	}
 
 	private static string FormatStack(IReadOnlyList<StackSnapshot> stack)
