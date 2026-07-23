@@ -151,10 +151,13 @@ horizontal_scroll_mode = 0
 [node name="GameContent" type="VBoxContainer" parent="Margin/Layout/GameArea/GameScroll"]
 layout_mode = 2
 size_flags_horizontal = 3
+size_flags_vertical = 3
 theme_override_constants/separation = 8
 
 [node name="OpponentSection" type="PanelContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent"]
 layout_mode = 2
+size_flags_vertical = 3
+size_flags_stretch_ratio = 0.7
 theme_override_styles/panel = SubResource("StyleBoxFlat_player")
 
 [node name="OpponentMargin" type="MarginContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection"]
@@ -203,11 +206,13 @@ text = "OPPONENT HAS PRIORITY"
 
 [node name="OpponentPlayArea" type="HBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout"]
 layout_mode = 2
+size_flags_vertical = 3
 theme_override_constants/separation = 10
 
 [node name="OpponentBattlefieldColumn" type="VBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea"]
 layout_mode = 2
 size_flags_horizontal = 3
+size_flags_vertical = 3
 theme_override_constants/separation = 4
 
 [node name="OpponentBattlefieldHeading" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea/OpponentBattlefieldColumn"]
@@ -216,7 +221,14 @@ theme_override_colors/font_color = Color(0.75, 0.8, 0.84, 1)
 theme_override_font_sizes/font_size = 14
 text = "BATTLEFIELD"
 
-[node name="OpponentBattlefield" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea/OpponentBattlefieldColumn"]
+[node name="OpponentBattlefieldScroll" type="ScrollContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea/OpponentBattlefieldColumn"]
+custom_minimum_size = Vector2(0, 174)
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 1
+
+[node name="OpponentBattlefield" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea/OpponentBattlefieldColumn/OpponentBattlefieldScroll"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
@@ -229,6 +241,7 @@ layout_mode = 2
 [node name="OpponentGraveyardColumn" type="VBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea"]
 custom_minimum_size = Vector2(158, 0)
 layout_mode = 2
+size_flags_vertical = 3
 theme_override_constants/separation = 4
 
 [node name="OpponentGraveyardHeading" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea/OpponentGraveyardColumn"]
@@ -237,13 +250,22 @@ theme_override_colors/font_color = Color(0.75, 0.8, 0.84, 1)
 theme_override_font_sizes/font_size = 14
 text = "GRAVEYARD"
 
-[node name="OpponentGraveyard" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea/OpponentGraveyardColumn"]
+[node name="OpponentGraveyardScroll" type="ScrollContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea/OpponentGraveyardColumn"]
+custom_minimum_size = Vector2(0, 174)
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 1
+
+[node name="OpponentGraveyard" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea/OpponentGraveyardColumn/OpponentGraveyardScroll"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 3
 theme_override_constants/h_separation = 8
 theme_override_constants/v_separation = 8
 
 [node name="StackSection" type="PanelContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent"]
+custom_minimum_size = Vector2(0, 32)
 layout_mode = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_stack")
 
@@ -288,10 +310,11 @@ theme_override_colors/font_color = Color(0.92, 0.9, 0.95, 1)
 theme_override_font_sizes/font_size = 15
 text = "STACK: Empty"
 vertical_alignment = 1
-autowrap_mode = 2
+clip_text = true
 
 [node name="YourSection" type="PanelContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent"]
 layout_mode = 2
+size_flags_vertical = 3
 theme_override_styles/panel = SubResource("StyleBoxFlat_player")
 
 [node name="YourMargin" type="MarginContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection"]
@@ -340,11 +363,13 @@ text = "YOU HAVE PRIORITY"
 
 [node name="YourPlayArea" type="HBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout"]
 layout_mode = 2
+size_flags_vertical = 3
 theme_override_constants/separation = 10
 
 [node name="YourBattlefieldColumn" type="VBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea"]
 layout_mode = 2
 size_flags_horizontal = 3
+size_flags_vertical = 3
 theme_override_constants/separation = 4
 
 [node name="YourBattlefieldHeading" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea/YourBattlefieldColumn"]
@@ -353,7 +378,14 @@ theme_override_colors/font_color = Color(0.75, 0.8, 0.84, 1)
 theme_override_font_sizes/font_size = 14
 text = "BATTLEFIELD"
 
-[node name="YourBattlefield" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea/YourBattlefieldColumn"]
+[node name="YourBattlefieldScroll" type="ScrollContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea/YourBattlefieldColumn"]
+custom_minimum_size = Vector2(0, 174)
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 1
+
+[node name="YourBattlefield" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea/YourBattlefieldColumn/YourBattlefieldScroll"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
@@ -366,6 +398,7 @@ layout_mode = 2
 [node name="YourGraveyardColumn" type="VBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea"]
 custom_minimum_size = Vector2(158, 0)
 layout_mode = 2
+size_flags_vertical = 3
 theme_override_constants/separation = 4
 
 [node name="YourGraveyardHeading" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea/YourGraveyardColumn"]
@@ -374,9 +407,17 @@ theme_override_colors/font_color = Color(0.75, 0.8, 0.84, 1)
 theme_override_font_sizes/font_size = 14
 text = "GRAVEYARD"
 
-[node name="YourGraveyard" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea/YourGraveyardColumn"]
+[node name="YourGraveyardScroll" type="ScrollContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea/YourGraveyardColumn"]
+custom_minimum_size = Vector2(0, 174)
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 1
+
+[node name="YourGraveyard" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea/YourGraveyardColumn/YourGraveyardScroll"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 3
 theme_override_constants/h_separation = 8
 theme_override_constants/v_separation = 8
 
@@ -386,9 +427,17 @@ theme_override_colors/font_color = Color(0.75, 0.8, 0.84, 1)
 theme_override_font_sizes/font_size = 14
 text = "HAND"
 
-[node name="YourHand" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout"]
+[node name="YourHandScroll" type="ScrollContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout"]
+custom_minimum_size = Vector2(0, 174)
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 1
+
+[node name="YourHand" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourHandScroll"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 3
 theme_override_constants/h_separation = 8
 theme_override_constants/v_separation = 8
 
