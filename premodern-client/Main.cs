@@ -216,13 +216,14 @@ public partial class Main : Control
 		long? interactionSequence)
 	{
 		RenderImageCards(nonlandRow, cards.Where(card => !card.IsLand).ToArray(),
-			selectableIds, interactionSequence);
+			selectableIds, interactionSequence, renderTappedState: true);
 		RenderImageCards(landRow, cards.Where(card => card.IsLand).ToArray(),
-			selectableIds, interactionSequence);
+			selectableIds, interactionSequence, renderTappedState: true);
 	}
 
 	private void RenderImageCards(Container container, IReadOnlyList<CardSnapshot> cards,
-		HashSet<int> selectableIds, long? interactionSequence)
+		HashSet<int> selectableIds, long? interactionSequence,
+		bool renderTappedState = false)
 	{
 		ClearChildren(container);
 		if (cards.Count == 0)
@@ -250,10 +251,14 @@ public partial class Main : Control
 			cardControl.Configure(
 				displayName,
 				texture,
-				actionable,
 				actionable
 					? $"Forge selectable | {Value(card.Zone)} | id={card.Id}"
 					: $"{Value(card.Zone)} | id={card.Id}");
+			cardControl.SetActionable(actionable);
+			if (renderTappedState)
+			{
+				cardControl.SetTapped(card.Tapped);
+			}
 
 			int cardId = card.Id;
 			long sequence = interactionSequence ?? 0;

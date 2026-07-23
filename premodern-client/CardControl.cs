@@ -17,36 +17,59 @@ public partial class CardControl : Control
 	[Export]
 	public Vector2 MiniatureSize { get; set; } = DefaultMiniatureSize;
 
+	private Control visualRoot = null!;
 	private TextureRect cardImage = null!;
 	private PanelContainer fallback = null!;
 	private Label fallbackName = null!;
+	private Panel actionableFrame = null!;
 	private string displayName = string.Empty;
 	private Texture2D? texture;
 	private bool primaryPressStarted;
+	private bool tappedLayoutEnabled;
 
 	public bool Actionable { get; private set; }
+	public bool Tapped { get; private set; }
 
 	public override void _Ready()
 	{
+		visualRoot = GetNode<Control>("%VisualRoot");
 		cardImage = GetNode<TextureRect>("%CardImage");
 		fallback = GetNode<PanelContainer>("%Fallback");
 		fallbackName = GetNode<Label>("%FallbackName");
+		actionableFrame = GetNode<Panel>("%ActionableFrame");
 		MouseExited += () => primaryPressStarted = false;
+		Resized += RefreshVisualState;
 		RefreshDisplay();
 	}
 
-	public void Configure(string visibleName, Texture2D? cardTexture, bool actionable,
-		string tooltipText)
+	public void Configure(string visibleName, Texture2D? cardTexture, string tooltipText)
 	{
 		displayName = visibleName;
 		texture = cardTexture;
-		Actionable = actionable;
 		TooltipText = tooltipText;
-		CustomMinimumSize = MiniatureSize;
 
 		if (IsNodeReady())
 		{
 			RefreshDisplay();
+		}
+	}
+
+	public void SetActionable(bool actionable)
+	{
+		Actionable = actionable;
+		if (IsNodeReady())
+		{
+			RefreshVisualState();
+		}
+	}
+
+	public void SetTapped(bool tapped)
+	{
+		tappedLayoutEnabled = true;
+		Tapped = tapped;
+		if (IsNodeReady())
+		{
+			RefreshVisualState();
 		}
 	}
 
@@ -57,8 +80,13 @@ public partial class CardControl : Control
 			return;
 		}
 
+		bool pointerOverVisual = IsPointerOverVisual();
 		if (mouseButton.ButtonIndex == MouseButton.Right)
 		{
+			if (!pointerOverVisual)
+			{
+				return;
+			}
 			AcceptEvent();
 			if (mouseButton.Pressed)
 			{
@@ -72,15 +100,23 @@ public partial class CardControl : Control
 			return;
 		}
 
-		AcceptEvent();
 		if (mouseButton.Pressed)
 		{
-			primaryPressStarted = Actionable;
+			primaryPressStarted = Actionable && pointerOverVisual;
+			if (pointerOverVisual)
+			{
+				AcceptEvent();
+			}
 			return;
 		}
 
-		bool requestAction = primaryPressStarted && Actionable;
+		bool requestAction = primaryPressStarted && Actionable && pointerOverVisual;
 		primaryPressStarted = false;
+		if (!pointerOverVisual)
+		{
+			return;
+		}
+		AcceptEvent();
 		if (requestAction)
 		{
 			EmitSignal(SignalName.PrimaryActionRequested);
@@ -89,10 +125,33 @@ public partial class CardControl : Control
 
 	private void RefreshDisplay()
 	{
-		CustomMinimumSize = MiniatureSize;
 		cardImage.Texture = texture;
 		cardImage.Visible = texture != null;
 		fallback.Visible = texture == null;
 		fallbackName.Text = displayName;
+		RefreshVisualState();
+	}
+
+	private void RefreshVisualState()
+	{
+		Vector2 slotMinimum = tappedLayoutEnabled
+			? new Vector2(MiniatureSize.Y, MiniatureSize.Y)
+			: MiniatureSize;
+		CustomMinimumSize = slotMinimum;
+
+		Vector2 slotSize = new(
+			Mathf.Max(Size.X, slotMinimum.X),
+			Mathf.Max(Size.Y, slotMinimum.Y));
+		visualRoot.Size = MiniatureSize;
+		visualRoot.Position = (slotSize - MiniatureSize) / 2f;
+		visualRoot.PivotOffset = MiniatureSize / 2f;
+		visualRoot.RotationDegrees = Tapped ? 90f : 0f;
+		actionableFrame.Visible = Actionable;
+	}
+
+	private bool IsPointerOverVisual()
+	{
+		return new Rect2(Vector2.Zero, visualRoot.Size)
+			.HasPoint(visualRoot.GetLocalMousePosition());
 	}
 }
