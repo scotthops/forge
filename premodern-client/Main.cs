@@ -8,7 +8,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Text.RegularExpressions;
 
 public partial class Main : Control
@@ -185,7 +184,7 @@ public partial class Main : Control
 		RenderPlayerArea(opponentHeader, "Opponent", opponent, interaction, false);
 		RenderPlayerIndicators(localPlayer, state, yourTurnIndicator, yourPriorityIndicator);
 		RenderPlayerIndicators(opponent, state, opponentTurnIndicator, opponentPriorityIndicator);
-		RenderTurnAndPhase(state);
+		RenderTurnAndPhase(state, localPlayer);
 
 		RenderImageCards(opponentBattlefield, opponent?.Battlefield ?? [], selectableCards,
 			interaction?.InteractionSequence);
@@ -197,7 +196,7 @@ public partial class Main : Control
 			interaction?.InteractionSequence);
 		RenderCardButtons(yourGraveyard, localPlayer?.Graveyard ?? [], selectableCards,
 			interaction?.InteractionSequence);
-		stackText.Text = FormatStack(state?.Stack ?? []);
+		stackText.Text = $"STACK: {FormatStack(state?.Stack ?? [])}";
 
 		RenderInteraction(interaction, state, localPlayer);
 		RenderAbilityQuery(clientState.PendingQuery);
@@ -357,10 +356,22 @@ public partial class Main : Control
 			?? (isLocal ? player.HandVisible.Count.ToString() : "?");
 	}
 
-	private void RenderTurnAndPhase(StateMessage? state)
+	private void RenderTurnAndPhase(StateMessage? state, PlayerSnapshot? localPlayer)
 	{
-		stackTurnText.Text = state == null ? "TURN —" : $"TURN {state.Turn}";
-		stackPhaseText.Text = state == null ? "PHASE —" : $"PHASE  {FormatPhase(state.Phase)}";
+		if (state == null)
+		{
+			stackTurnText.Text = "TURN —";
+			stackPhaseText.Text = "PHASE: —";
+			return;
+		}
+
+		string activePlayer = localPlayer == null || state.ActivePlayerId == null
+			? "ACTIVE PLAYER —"
+			: state.ActivePlayerId == localPlayer.Id
+				? "YOUR TURN"
+				: "OPPONENT'S TURN";
+		stackTurnText.Text = $"TURN {state.Turn} — {activePlayer}";
+		stackPhaseText.Text = $"PHASE: {FormatPhase(state.Phase)}";
 	}
 
 	private static void RenderPlayerIndicators(PlayerSnapshot? player, StateMessage? state,
@@ -601,20 +612,18 @@ public partial class Main : Control
 	{
 		if (stack.Count == 0)
 		{
-			return "(empty)";
+			return "Empty";
 		}
-		StringBuilder text = new();
-		foreach (StackSnapshot item in stack)
+
+		return string.Join("  •  ", stack.Select(item =>
 		{
 			string source = item.Source == null
 				? Value(item.Text)
-				: $"{CardName(item.Source)} [#{item.Source.Id}]";
-			string targets = item.Targets.Count == 0
-				? "none"
-				: string.Join(", ", item.Targets.Select(target => $"{CardName(target)} [#{target.Id}]"));
-			text.AppendLine($"{source} -> {targets}");
-		}
-		return text.ToString().TrimEnd();
+				: CardName(item.Source);
+			return item.Targets.Count == 0
+				? source
+				: $"{source} → {string.Join(", ", item.Targets.Select(CardName))}";
+		}));
 	}
 
 	private static void ClearChildren(Node parent)

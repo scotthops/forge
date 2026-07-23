@@ -43,27 +43,21 @@ corner_radius_bottom_right = 5
 corner_radius_bottom_left = 5
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_stack"]
-bg_color = Color(0.105, 0.09, 0.13, 1)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.53, 0.39, 0.68, 1)
-corner_radius_top_left = 5
-corner_radius_top_right = 5
-corner_radius_bottom_right = 5
-corner_radius_bottom_left = 5
+bg_color = Color(0.085, 0.09, 0.105, 1)
+border_width_top = 1
+border_width_bottom = 1
+border_color = Color(0.42, 0.35, 0.5, 1)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_turn"]
-content_margin_left = 12.0
-content_margin_top = 6.0
-content_margin_right = 12.0
-content_margin_bottom = 6.0
+content_margin_left = 8.0
+content_margin_top = 3.0
+content_margin_right = 8.0
+content_margin_bottom = 3.0
 bg_color = Color(0.09, 0.27, 0.34, 1)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
 border_color = Color(0.27, 0.72, 0.82, 1)
 corner_radius_top_left = 4
 corner_radius_top_right = 4
@@ -71,15 +65,15 @@ corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_priority"]
-content_margin_left = 12.0
-content_margin_top = 6.0
-content_margin_right = 12.0
-content_margin_bottom = 6.0
+content_margin_left = 8.0
+content_margin_top = 3.0
+content_margin_right = 8.0
+content_margin_bottom = 3.0
 bg_color = Color(0.31, 0.225, 0.055, 1)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
 border_color = Color(0.92, 0.7, 0.22, 1)
 corner_radius_top_left = 4
 corner_radius_top_right = 4
@@ -112,14 +106,14 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_constants/margin_left = 18
-theme_override_constants/margin_top = 14
-theme_override_constants/margin_right = 18
-theme_override_constants/margin_bottom = 14
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 10
 
 [node name="Layout" type="VBoxContainer" parent="Margin"]
 layout_mode = 2
-theme_override_constants/separation = 8
+theme_override_constants/separation = 6
 
 [node name="TopRow" type="HBoxContainer" parent="Margin/Layout"]
 layout_mode = 2
@@ -146,7 +140,7 @@ layout_mode = 2
 [node name="GameArea" type="HBoxContainer" parent="Margin/Layout"]
 layout_mode = 2
 size_flags_vertical = 3
-theme_override_constants/separation = 12
+theme_override_constants/separation = 10
 
 [node name="GameScroll" type="ScrollContainer" parent="Margin/Layout/GameArea"]
 layout_mode = 2
@@ -157,7 +151,7 @@ horizontal_scroll_mode = 0
 [node name="GameContent" type="VBoxContainer" parent="Margin/Layout/GameArea/GameScroll"]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_constants/separation = 12
+theme_override_constants/separation = 8
 
 [node name="OpponentSection" type="PanelContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent"]
 layout_mode = 2
@@ -165,65 +159,85 @@ theme_override_styles/panel = SubResource("StyleBoxFlat_player")
 
 [node name="OpponentMargin" type="MarginContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection"]
 layout_mode = 2
-theme_override_constants/margin_left = 12
-theme_override_constants/margin_top = 10
-theme_override_constants/margin_right = 12
-theme_override_constants/margin_bottom = 12
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 6
 
 [node name="OpponentLayout" type="VBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin"]
 layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="OpponentHeaderRow" type="HBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout"]
+layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="OpponentHeader" type="Button" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout"]
+[node name="OpponentHeader" type="Button" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentHeaderRow"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_font_sizes/font_size = 19
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 17
 text = "Opponent: waiting for state"
 
-[node name="OpponentIndicators" type="HBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout"]
+[node name="OpponentIndicators" type="HBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentHeaderRow"]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="OpponentTurnIndicator" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentIndicators"]
+[node name="OpponentTurnIndicator" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentHeaderRow/OpponentIndicators"]
 unique_name_in_owner = true
 visible = false
 layout_mode = 2
 theme_override_colors/font_color = Color(0.8, 0.96, 1, 1)
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 14
 theme_override_styles/normal = SubResource("StyleBoxFlat_turn")
 text = "OPPONENT'S TURN · ACTIVE"
 
-[node name="OpponentPriorityIndicator" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentIndicators"]
+[node name="OpponentPriorityIndicator" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentHeaderRow/OpponentIndicators"]
 unique_name_in_owner = true
 visible = false
 layout_mode = 2
 theme_override_colors/font_color = Color(1, 0.91, 0.62, 1)
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 14
 theme_override_styles/normal = SubResource("StyleBoxFlat_priority")
 text = "OPPONENT HAS PRIORITY"
 
-[node name="OpponentBattlefieldHeading" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout"]
+[node name="OpponentPlayArea" type="HBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="OpponentBattlefieldColumn" type="VBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="OpponentBattlefieldHeading" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea/OpponentBattlefieldColumn"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.75, 0.8, 0.84, 1)
 theme_override_font_sizes/font_size = 14
 text = "BATTLEFIELD"
 
-[node name="OpponentBattlefield" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout"]
+[node name="OpponentBattlefield" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea/OpponentBattlefieldColumn"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 3
 theme_override_constants/h_separation = 8
 theme_override_constants/v_separation = 8
 
-[node name="OpponentZoneSeparator" type="HSeparator" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout"]
+[node name="OpponentZoneSeparator" type="VSeparator" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea"]
 layout_mode = 2
 
-[node name="OpponentGraveyardHeading" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout"]
+[node name="OpponentGraveyardColumn" type="VBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea"]
+custom_minimum_size = Vector2(158, 0)
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="OpponentGraveyardHeading" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea/OpponentGraveyardColumn"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.75, 0.8, 0.84, 1)
 theme_override_font_sizes/font_size = 14
 text = "GRAVEYARD"
 
-[node name="OpponentGraveyard" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout"]
+[node name="OpponentGraveyard" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/OpponentSection/OpponentMargin/OpponentLayout/OpponentPlayArea/OpponentGraveyardColumn"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/h_separation = 8
@@ -235,52 +249,45 @@ theme_override_styles/panel = SubResource("StyleBoxFlat_stack")
 
 [node name="StackMargin" type="MarginContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection"]
 layout_mode = 2
-theme_override_constants/margin_left = 14
-theme_override_constants/margin_top = 10
-theme_override_constants/margin_right = 14
-theme_override_constants/margin_bottom = 12
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 4
 
-[node name="StackLayout" type="VBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin"]
+[node name="StackLayout" type="HBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin"]
 layout_mode = 2
-theme_override_constants/separation = 7
+theme_override_constants/separation = 12
 
-[node name="TurnPhaseRow" type="HBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin/StackLayout"]
-layout_mode = 2
-alignment = 1
-theme_override_constants/separation = 24
-
-[node name="StackTurnText" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin/StackLayout/TurnPhaseRow"]
+[node name="StackTurnText" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin/StackLayout"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_colors/font_color = Color(0.55, 0.88, 0.95, 1)
-theme_override_font_sizes/font_size = 17
+theme_override_font_sizes/font_size = 15
 text = "TURN —"
+vertical_alignment = 1
 
-[node name="StackPhaseText" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin/StackLayout/TurnPhaseRow"]
+[node name="TurnPhaseSeparator" type="VSeparator" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin/StackLayout"]
+layout_mode = 2
+
+[node name="StackPhaseText" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin/StackLayout"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_colors/font_color = Color(0.83, 0.86, 0.9, 1)
-theme_override_font_sizes/font_size = 17
-text = "PHASE —"
+theme_override_font_sizes/font_size = 15
+text = "PHASE: —"
+vertical_alignment = 1
 
-[node name="StackContextSeparator" type="HSeparator" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin/StackLayout"]
+[node name="PhaseStackSeparator" type="VSeparator" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin/StackLayout"]
 layout_mode = 2
-
-[node name="StackHeading" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin/StackLayout"]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.89, 0.78, 1, 1)
-theme_override_font_sizes/font_size = 19
-text = "STACK"
-horizontal_alignment = 1
 
 [node name="StackText" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/StackSection/StackMargin/StackLayout"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 42)
 layout_mode = 2
+size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.92, 0.9, 0.95, 1)
 theme_override_font_sizes/font_size = 15
-text = "(empty)"
-horizontal_alignment = 1
+text = "STACK: Empty"
+vertical_alignment = 1
 autowrap_mode = 2
 
 [node name="YourSection" type="PanelContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent"]
@@ -289,57 +296,89 @@ theme_override_styles/panel = SubResource("StyleBoxFlat_player")
 
 [node name="YourMargin" type="MarginContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection"]
 layout_mode = 2
-theme_override_constants/margin_left = 12
-theme_override_constants/margin_top = 10
-theme_override_constants/margin_right = 12
-theme_override_constants/margin_bottom = 12
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 6
 
 [node name="YourLayout" type="VBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin"]
 layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="YourHeaderRow" type="HBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout"]
+layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="YourHeader" type="Button" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout"]
+[node name="YourHeader" type="Button" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourHeaderRow"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_font_sizes/font_size = 19
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 17
 text = "Your player: waiting for controller"
 
-[node name="YourIndicators" type="HBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout"]
+[node name="YourIndicators" type="HBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourHeaderRow"]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="YourTurnIndicator" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourIndicators"]
+[node name="YourTurnIndicator" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourHeaderRow/YourIndicators"]
 unique_name_in_owner = true
 visible = false
 layout_mode = 2
 theme_override_colors/font_color = Color(0.8, 0.96, 1, 1)
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 14
 theme_override_styles/normal = SubResource("StyleBoxFlat_turn")
 text = "YOUR TURN · ACTIVE"
 
-[node name="YourPriorityIndicator" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourIndicators"]
+[node name="YourPriorityIndicator" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourHeaderRow/YourIndicators"]
 unique_name_in_owner = true
 visible = false
 layout_mode = 2
 theme_override_colors/font_color = Color(1, 0.91, 0.62, 1)
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 14
 theme_override_styles/normal = SubResource("StyleBoxFlat_priority")
 text = "YOU HAVE PRIORITY"
 
-[node name="YourBattlefieldHeading" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout"]
+[node name="YourPlayArea" type="HBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="YourBattlefieldColumn" type="VBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="YourBattlefieldHeading" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea/YourBattlefieldColumn"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.75, 0.8, 0.84, 1)
 theme_override_font_sizes/font_size = 14
 text = "BATTLEFIELD"
 
-[node name="YourBattlefield" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout"]
+[node name="YourBattlefield" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea/YourBattlefieldColumn"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 8
+
+[node name="YourBattlefieldZoneSeparator" type="VSeparator" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea"]
+layout_mode = 2
+
+[node name="YourGraveyardColumn" type="VBoxContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea"]
+custom_minimum_size = Vector2(158, 0)
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="YourGraveyardHeading" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea/YourGraveyardColumn"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.75, 0.8, 0.84, 1)
+theme_override_font_sizes/font_size = 14
+text = "GRAVEYARD"
+
+[node name="YourGraveyard" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout/YourPlayArea/YourGraveyardColumn"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/h_separation = 8
 theme_override_constants/v_separation = 8
-
-[node name="YourHandSeparator" type="HSeparator" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout"]
-layout_mode = 2
 
 [node name="YourHandHeading" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout"]
 layout_mode = 2
@@ -348,21 +387,6 @@ theme_override_font_sizes/font_size = 14
 text = "HAND"
 
 [node name="YourHand" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_constants/h_separation = 8
-theme_override_constants/v_separation = 8
-
-[node name="YourGraveyardSeparator" type="HSeparator" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout"]
-layout_mode = 2
-
-[node name="YourGraveyardHeading" type="Label" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout"]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.75, 0.8, 0.84, 1)
-theme_override_font_sizes/font_size = 14
-text = "GRAVEYARD"
-
-[node name="YourGraveyard" type="HFlowContainer" parent="Margin/Layout/GameArea/GameScroll/GameContent/YourSection/YourMargin/YourLayout"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/h_separation = 8
