@@ -27,6 +27,10 @@ than `1` with `UNSUPPORTED_SCHEMA_VERSION`. Rejected messages do not invoke Forg
   `IGameController`.
 - `error`: A structured protocol or validation failure.
 
+Visible card snapshots include `isLand`, derived from the card's current Forge type. The value is
+`true` for any card whose current type includes Land, including artifact lands and creature lands.
+It is always `false` for hidden cards so the projection does not reveal private type information.
+
 ## Client To Forge
 
 - `selectCard`: Select a currently offered card by ID.

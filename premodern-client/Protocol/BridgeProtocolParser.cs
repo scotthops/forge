@@ -186,7 +186,8 @@ public static class BridgeProtocolParser
             String(card, "name"),
             String(card, "zone"),
             Boolean(card, "hidden"),
-            Boolean(card, "tapped"));
+            Boolean(card, "tapped"),
+            Boolean(card, "isLand"));
     }
 
     private static IReadOnlyList<int> ParseIds(JsonElement parent, string property)

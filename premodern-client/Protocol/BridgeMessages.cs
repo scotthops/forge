@@ -49,7 +49,8 @@ public sealed record CardSnapshot(
     string? Name,
     string? Zone,
     bool Hidden,
-    bool Tapped);
+    bool Tapped,
+    bool IsLand);
 
 public sealed record StackSnapshot(
     int Id,

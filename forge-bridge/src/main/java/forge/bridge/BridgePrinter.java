@@ -161,8 +161,10 @@ final class BridgePrinter {
         boolean visible = localPlayers != null && !localPlayers.isEmpty()
                 && card.canBeShownToAny(localPlayers);
         ZoneType zone = card.getZone();
+        boolean isLand = visible && card.getCurrentState() != null
+                && card.getCurrentState().isLand();
         return new CardSnapshot(card.getId(), visible ? clean(card.getName()) : null,
-                zone == null ? null : zone.name(), !visible, visible && card.isTapped());
+                zone == null ? null : zone.name(), !visible, visible && card.isTapped(), isLand);
     }
 
     private static String clean(String value) {
@@ -181,7 +183,8 @@ final class BridgePrinter {
                                   List<CardSnapshot> battlefield,
                                   List<CardSnapshot> graveyard) { }
 
-    private record CardSnapshot(int id, String name, String zone, boolean hidden, boolean tapped) { }
+    private record CardSnapshot(int id, String name, String zone, boolean hidden, boolean tapped,
+                                boolean isLand) { }
 
     private record StackSnapshot(int id, String text, CardSnapshot source,
                                  List<CardSnapshot> targets) { }

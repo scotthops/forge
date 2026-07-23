@@ -29,13 +29,15 @@ public partial class Main : Control
 	private BridgeProcessClient? bridge;
 	private Label statusLabel = null!;
 	private Button opponentHeader = null!;
-	private FlowContainer opponentBattlefield = null!;
+	private FlowContainer opponentNonlands = null!;
+	private FlowContainer opponentLands = null!;
 	private FlowContainer opponentGraveyard = null!;
 	private Label stackTurnText = null!;
 	private Label stackPhaseText = null!;
 	private Label stackText = null!;
 	private Button yourHeader = null!;
-	private FlowContainer yourBattlefield = null!;
+	private FlowContainer yourNonlands = null!;
+	private FlowContainer yourLands = null!;
 	private FlowContainer yourHand = null!;
 	private FlowContainer yourGraveyard = null!;
 	private Label opponentTurnIndicator = null!;
@@ -141,13 +143,15 @@ public partial class Main : Control
 	{
 		statusLabel = GetNode<Label>("%ConnectionStatus");
 		opponentHeader = GetNode<Button>("%OpponentHeader");
-		opponentBattlefield = GetNode<FlowContainer>("%OpponentBattlefield");
+		opponentNonlands = GetNode<FlowContainer>("%OpponentNonlands");
+		opponentLands = GetNode<FlowContainer>("%OpponentLands");
 		opponentGraveyard = GetNode<FlowContainer>("%OpponentGraveyard");
 		stackTurnText = GetNode<Label>("%StackTurnText");
 		stackPhaseText = GetNode<Label>("%StackPhaseText");
 		stackText = GetNode<Label>("%StackText");
 		yourHeader = GetNode<Button>("%YourHeader");
-		yourBattlefield = GetNode<FlowContainer>("%YourBattlefield");
+		yourNonlands = GetNode<FlowContainer>("%YourNonlands");
+		yourLands = GetNode<FlowContainer>("%YourLands");
 		yourHand = GetNode<FlowContainer>("%YourHand");
 		yourGraveyard = GetNode<FlowContainer>("%YourGraveyard");
 		opponentTurnIndicator = GetNode<Label>("%OpponentTurnIndicator");
@@ -186,11 +190,13 @@ public partial class Main : Control
 		RenderPlayerIndicators(opponent, state, opponentTurnIndicator, opponentPriorityIndicator);
 		RenderTurnAndPhase(state, localPlayer);
 
-		RenderImageCards(opponentBattlefield, opponent?.Battlefield ?? [], selectableCards,
+		RenderBattlefieldRows(opponentNonlands, opponentLands,
+			opponent?.Battlefield ?? [], selectableCards,
 			interaction?.InteractionSequence);
 		RenderCardButtons(opponentGraveyard, opponent?.Graveyard ?? [], selectableCards,
 			interaction?.InteractionSequence);
-		RenderImageCards(yourBattlefield, localPlayer?.Battlefield ?? [], selectableCards,
+		RenderBattlefieldRows(yourNonlands, yourLands,
+			localPlayer?.Battlefield ?? [], selectableCards,
 			interaction?.InteractionSequence);
 		RenderImageCards(yourHand, localPlayer?.HandVisible ?? [], selectableCards,
 			interaction?.InteractionSequence);
@@ -203,6 +209,16 @@ public partial class Main : Control
 		actionStatus.Text = clientState.LastActionStatus
 			?? clientState.LastError
 			?? "Choose only controls currently enabled by Forge.";
+	}
+
+	private void RenderBattlefieldRows(FlowContainer nonlandRow, FlowContainer landRow,
+		IReadOnlyList<CardSnapshot> cards, HashSet<int> selectableIds,
+		long? interactionSequence)
+	{
+		RenderImageCards(nonlandRow, cards.Where(card => !card.IsLand).ToArray(),
+			selectableIds, interactionSequence);
+		RenderImageCards(landRow, cards.Where(card => card.IsLand).ToArray(),
+			selectableIds, interactionSequence);
 	}
 
 	private void RenderImageCards(Container container, IReadOnlyList<CardSnapshot> cards,
