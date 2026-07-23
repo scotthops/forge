@@ -55,6 +55,7 @@ public partial class Main : Control
 	private TextureRect cardPreview = null!;
 	private Label cardPreviewName = null!;
 	private CardImageCatalog cardImages = null!;
+	private PackedScene cardControlScene = null!;
 	private long renderedInteractionSequence;
 	private bool stateObserved;
 	private bool interactionObserved;
@@ -68,6 +69,7 @@ public partial class Main : Control
 	{
 		BindSceneNodes();
 		cardImages = new CardImageCatalog("res://card-images/sligh");
+		cardControlScene = ResourceLoader.Load<PackedScene>("res://CardControl.tscn");
 		passPriorityButton.Pressed += OnPassPriority;
 		okButton.Pressed += () => OnButton(BridgeButton.Ok);
 		cancelButton.Pressed += () => OnButton(BridgeButton.Cancel);
@@ -185,13 +187,13 @@ public partial class Main : Control
 		RenderPlayerIndicators(opponent, state, opponentTurnIndicator, opponentPriorityIndicator);
 		RenderTurnAndPhase(state);
 
-		RenderCardButtons(opponentBattlefield, opponent?.Battlefield ?? [], selectableCards,
+		RenderImageCards(opponentBattlefield, opponent?.Battlefield ?? [], selectableCards,
 			interaction?.InteractionSequence);
 		RenderCardButtons(opponentGraveyard, opponent?.Graveyard ?? [], selectableCards,
 			interaction?.InteractionSequence);
-		RenderCardButtons(yourBattlefield, localPlayer?.Battlefield ?? [], selectableCards,
+		RenderImageCards(yourBattlefield, localPlayer?.Battlefield ?? [], selectableCards,
 			interaction?.InteractionSequence);
-		RenderCardButtons(yourHand, localPlayer?.HandVisible ?? [], selectableCards,
+		RenderImageCards(yourHand, localPlayer?.HandVisible ?? [], selectableCards,
 			interaction?.InteractionSequence);
 		RenderCardButtons(yourGraveyard, localPlayer?.Graveyard ?? [], selectableCards,
 			interaction?.InteractionSequence);
@@ -202,6 +204,49 @@ public partial class Main : Control
 		actionStatus.Text = clientState.LastActionStatus
 			?? clientState.LastError
 			?? "Choose only controls currently enabled by Forge.";
+	}
+
+	private void RenderImageCards(Container container, IReadOnlyList<CardSnapshot> cards,
+		HashSet<int> selectableIds, long? interactionSequence)
+	{
+		ClearChildren(container);
+		if (cards.Count == 0)
+		{
+			container.AddChild(EmptyLabel());
+			return;
+		}
+
+		foreach (CardSnapshot card in cards)
+		{
+			bool actionable = interactionSequence != null
+				&& selectableIds.Contains(card.Id)
+				&& CanSendAsync();
+			Texture2D? texture = null;
+			if (!card.Hidden && !string.IsNullOrWhiteSpace(card.Name)
+				&& cardImages.TryGetTexture(card.Name, out Texture2D resolvedTexture))
+			{
+				texture = resolvedTexture;
+			}
+
+			string displayName = card.Hidden || string.IsNullOrWhiteSpace(card.Name)
+				? "Hidden card"
+				: card.Name;
+			CardControl cardControl = cardControlScene.Instantiate<CardControl>();
+			cardControl.Configure(
+				displayName,
+				texture,
+				actionable,
+				actionable
+					? $"Forge selectable | {Value(card.Zone)} | id={card.Id}"
+					: $"{Value(card.Zone)} | id={card.Id}");
+
+			int cardId = card.Id;
+			long sequence = interactionSequence ?? 0;
+			cardControl.PrimaryActionRequested +=
+				() => OnCardPressed(card, cardId, sequence);
+			cardControl.PreviewRequested += () => ShowCardPreview(card);
+			container.AddChild(cardControl);
+		}
 	}
 
 	private void RenderCardButtons(Container container, IReadOnlyList<CardSnapshot> cards,
@@ -258,6 +303,11 @@ public partial class Main : Control
 		}
 
 		cardControl.AcceptEvent();
+		ShowCardPreview(card);
+	}
+
+	private void ShowCardPreview(CardSnapshot card)
+	{
 		if (card.Hidden || string.IsNullOrWhiteSpace(card.Name))
 		{
 			return;
