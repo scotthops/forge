@@ -145,6 +145,30 @@ public static class BridgeProtocolParser
                 String(choice, "description"),
                 Boolean(choice, "canPlay")));
         }
+
+        List<CombatDamageRecipient> recipients = [];
+        foreach (JsonElement recipient in Array(root, "recipients"))
+        {
+            recipients.Add(new CombatDamageRecipient(
+                String(recipient, "key"),
+                String(recipient, "entityType"),
+                Int32(recipient, "entityId"),
+                String(recipient, "name"),
+                String(recipient, "role"),
+                Int32(recipient, "order"),
+                Int32(recipient, "minimumDamage")));
+        }
+
+        CombatDamageConstraints? constraints = null;
+        if (root.TryGetProperty("constraints", out JsonElement constraintsElement)
+            && constraintsElement.ValueKind == JsonValueKind.Object)
+        {
+            constraints = new CombatDamageConstraints(
+                Boolean(constraintsElement, "orderedAssignment"),
+                Boolean(constraintsElement, "defenderRequiresLethalBlockers"),
+                Boolean(constraintsElement, "freeAssignment"),
+                Boolean(constraintsElement, "maySkip"));
+        }
         return new QueryMessage(
             schemaVersion,
             String(root, "requestId"),
@@ -152,6 +176,9 @@ public static class BridgeProtocolParser
             NullableInt32(root, "hostCardId"),
             String(root, "hostCardName"),
             choices,
+            NullableInt32(root, "totalDamage"),
+            recipients,
+            constraints,
             String(root, "offered"),
             NullableBoolean(root, "cancellable"));
     }

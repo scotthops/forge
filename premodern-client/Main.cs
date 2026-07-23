@@ -502,6 +502,14 @@ public partial class Main : Control
 		{
 			return;
 		}
+		if (query.Kind == "combatDamageAssignment"
+			&& query.TotalDamage.HasValue
+			&& query.Recipients.Count > 0
+			&& query.Constraints != null)
+		{
+			RenderCombatDamageQuery(query);
+			return;
+		}
 
 		abilityTitle.Text = $"Forge requires a choice: {Value(query.Kind)}\n"
 			+ $"{Value(query.HostCardName)}  requestId={Value(query.RequestId)}";
@@ -526,6 +534,151 @@ public partial class Main : Control
 			button.Pressed += () => SendReply(requestId, selectedId);
 			abilityChoices.AddChild(button);
 		}
+	}
+
+	private void RenderCombatDamageQuery(QueryMessage query)
+	{
+		int totalDamage = query.TotalDamage!.Value;
+		CombatDamageConstraints constraints = query.Constraints!;
+		string requestId = query.RequestId ?? string.Empty;
+		abilityTitle.Text = $"ASSIGN COMBAT DAMAGE — {Value(query.HostCardName)} ({totalDamage})";
+
+		List<(CombatDamageRecipient Recipient, SpinBox Amount)> editors = [];
+		foreach (CombatDamageRecipient recipient in query.Recipients.OrderBy(item => item.Order))
+		{
+			HBoxContainer row = new()
+			{
+				SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+			};
+			string role = recipient.Role == "defender" ? "Defender" : "Blocker";
+			string minimum = recipient.Role == "blocker"
+				? $" — lethal {recipient.MinimumDamage}"
+				: string.Empty;
+			Label name = new()
+			{
+				Text = $"{role}: {Value(recipient.Name)}{minimum}",
+				SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+				VerticalAlignment = VerticalAlignment.Center
+			};
+			SpinBox amount = new()
+			{
+				MinValue = 0,
+				MaxValue = totalDamage,
+				Step = 1,
+				Value = 0,
+				AllowGreater = false,
+				AllowLesser = false,
+				CustomMinimumSize = new Vector2(100, 0)
+			};
+			row.AddChild(name);
+			row.AddChild(amount);
+			abilityChoices.AddChild(row);
+			editors.Add((recipient, amount));
+		}
+
+		// Start from a legal, deliberately non-opinionated assignment. The player can
+		// reduce this amount and distribute the remainder among every offered recipient.
+		editors[0].Amount.Value = totalDamage;
+		Label assignmentStatus = new()
+		{
+			AutowrapMode = TextServer.AutowrapMode.WordSmart
+		};
+		abilityChoices.AddChild(assignmentStatus);
+
+		HBoxContainer actions = new();
+		Button confirm = new() { Text = "Confirm damage assignment" };
+		actions.AddChild(confirm);
+		if (constraints.MaySkip)
+		{
+			Button skip = new() { Text = "Assign another attacker first" };
+			skip.Pressed += () => SendCombatDamageReply(
+				requestId, Array.Empty<CombatDamageAmount>(), skip: true);
+			actions.AddChild(skip);
+		}
+		abilityChoices.AddChild(actions);
+
+		void RefreshAssignment()
+		{
+			Dictionary<string, int> amounts = editors.ToDictionary(
+				entry => entry.Recipient.Key ?? string.Empty,
+				entry => Convert.ToInt32(entry.Amount.Value));
+			int assigned = amounts.Values.Sum();
+			string? problem = ValidateCombatDamageQuery(query, amounts);
+			int remaining = totalDamage - assigned;
+			assignmentStatus.Text = problem == null
+				? "Remaining: 0 — assignment is legal"
+				: $"Remaining: {remaining} — {problem}";
+			confirm.Disabled = problem != null;
+		}
+
+		foreach ((CombatDamageRecipient _, SpinBox amount) in editors)
+		{
+			amount.ValueChanged += _ => RefreshAssignment();
+		}
+		confirm.Pressed += () => SendCombatDamageReply(requestId,
+			editors.Select(entry => new CombatDamageAmount(
+				entry.Recipient.Key ?? string.Empty,
+				Convert.ToInt32(entry.Amount.Value))).ToArray(), skip: false);
+		RefreshAssignment();
+	}
+
+	private static string? ValidateCombatDamageQuery(QueryMessage query,
+		IReadOnlyDictionary<string, int> amounts)
+	{
+		int totalDamage = query.TotalDamage ?? 0;
+		if (amounts.Values.Any(amount => amount < 0))
+		{
+			return "Damage cannot be negative.";
+		}
+		if (amounts.Values.Sum() != totalDamage)
+		{
+			return $"Assign exactly {totalDamage} damage.";
+		}
+
+		CombatDamageConstraints constraints = query.Constraints!;
+		if (constraints.FreeAssignment)
+		{
+			return null;
+		}
+
+		bool allEarlierBlockersHaveLethal = true;
+		foreach (CombatDamageRecipient recipient in query.Recipients.OrderBy(item => item.Order))
+		{
+			int amount = amounts.GetValueOrDefault(recipient.Key ?? string.Empty);
+			if (recipient.Role == "defender")
+			{
+				if (constraints.DefenderRequiresLethalBlockers
+					&& amount > 0 && !allEarlierBlockersHaveLethal)
+				{
+					return "Assign lethal damage to every blocker before the defender.";
+				}
+				continue;
+			}
+
+			if (constraints.OrderedAssignment && amount > 0
+				&& !allEarlierBlockersHaveLethal)
+			{
+				return "Assign lethal damage to each earlier blocker first.";
+			}
+			allEarlierBlockersHaveLethal &= amount >= recipient.MinimumDamage;
+		}
+		return null;
+	}
+
+	private void SendCombatDamageReply(string requestId,
+		IReadOnlyList<CombatDamageAmount> assignments, bool skip)
+	{
+		QueryMessage? query = clientState.PendingQuery;
+		if (query == null || query.RequestId != requestId
+			|| query.Kind != "combatDamageAssignment")
+		{
+			actionStatus.Text = "That damage assignment is no longer pending.";
+			return;
+		}
+		GD.Print($"G3 COMBAT_DAMAGE_REPLY requestId={requestId} "
+			+ $"skip={skip} assignments={string.Join(",", assignments.Select(
+				assignment => $"{assignment.RecipientKey}:{assignment.Amount}"))}");
+		SendCommand(new CombatDamageReplyCommand(requestId, assignments, skip));
 	}
 
 	private void OnPassPriority()

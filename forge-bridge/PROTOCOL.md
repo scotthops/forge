@@ -51,10 +51,23 @@ emitted `interaction` during one bridge process. `selectCard`, `selectPlayer`, `
 compares it with the current sequence immediately before calling `IGameController`. A mismatch
 produces `STALE_INTERACTION`; Forge is not called.
 
-`requestId` belongs to one synchronous `query`. A `reply` must echo it and select only an ID from
-that query's offered choices. Replayed Forge callbacks receive new request IDs and must be answered
+`requestId` belongs to one synchronous `query`. A `reply` must echo it. Choice queries select only
+an ID offered by that query. Combat-damage queries instead return one integer amount for every
+offered recipient. Replayed Forge callbacks receive new request IDs and must be answered
 independently. `requestId` is authoritative for synchronous replies; `interactionSequence` does not
 replace it.
+
+### Combat Damage Assignment
+
+`combatDamageAssignment` is an amount query rather than a menu of prebuilt choices. Forge supplies
+the total damage, recipients in damage-assignment order, and the constraints the client should
+present. Each recipient has a query-local `key`, a generic `entityType` and `entityId`, its combat
+`role`, and Forge's current `minimumDamage` for progressing past that blocker. A defender can be a
+`player` or a `card`; it is not represented as a fake card ID.
+
+The bridge validates the complete reply against the Forge-owned assignment model before returning
+it to `PlayerControllerHuman`. Invalid replies produce `invalidCombatDamageAssignment` and reissue
+the still-pending query with the same `requestId` so the client can correct the amounts.
 
 ## Examples
 
@@ -70,6 +83,13 @@ Synchronous query and reply:
 ```json
 {"schemaVersion":1,"type":"query","requestId":"q-7","kind":"abilityChoice","hostCardId":123,"hostCardName":"Lightning Bolt","choices":[{"id":456,"description":"Lightning Bolt deals 3 damage to any target.","canPlay":true}]}
 {"schemaVersion":1,"type":"reply","requestId":"q-7","selectedId":456}
+```
+
+Trample assignment and reply:
+
+```json
+{"schemaVersion":1,"type":"query","requestId":"q-8","kind":"combatDamageAssignment","hostCardId":101,"hostCardName":"Ball Lightning","totalDamage":6,"recipients":[{"key":"blocker:0","entityType":"card","entityId":202,"name":"Goblin Patrol","role":"blocker","order":0,"minimumDamage":1},{"key":"defender","entityType":"player","entityId":303,"name":"Opponent","role":"defender","order":1,"minimumDamage":0}],"constraints":{"orderedAssignment":true,"defenderRequiresLethalBlockers":true,"freeAssignment":false,"maySkip":false}}
+{"schemaVersion":1,"type":"reply","requestId":"q-8","assignments":[{"recipientKey":"blocker:0","amount":1},{"recipientKey":"defender","amount":5}],"skip":false}
 ```
 
 Rejected stale action:

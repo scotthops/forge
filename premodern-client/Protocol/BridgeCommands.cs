@@ -1,6 +1,8 @@
 #nullable enable
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 
 namespace PremodernClient.Protocol;
@@ -29,6 +31,14 @@ public sealed record PassPriorityCommand(long InteractionSequence)
     : AsyncInteractionCommand("passPriority", InteractionSequence);
 
 public sealed record ReplyCommand(string RequestId, int SelectedId)
+    : BridgeCommand("reply");
+
+public sealed record CombatDamageAmount(string RecipientKey, int Amount);
+
+public sealed record CombatDamageReplyCommand(
+    string RequestId,
+    IReadOnlyList<CombatDamageAmount> Assignments,
+    bool Skip = false)
     : BridgeCommand("reply");
 
 public static class BridgeCommandSerializer
@@ -73,6 +83,20 @@ public static class BridgeCommandSerializer
                 selectedId = reply.SelectedId
             },
             ReplyCommand => throw new ArgumentException("A reply command requires a requestId.", nameof(command)),
+            CombatDamageReplyCommand reply when !string.IsNullOrWhiteSpace(reply.RequestId) => new
+            {
+                schemaVersion = BridgeSchema.SupportedVersion,
+                type = reply.Type,
+                requestId = reply.RequestId,
+                assignments = reply.Assignments.Select(assignment => new
+                {
+                    recipientKey = assignment.RecipientKey,
+                    amount = assignment.Amount
+                }),
+                skip = reply.Skip
+            },
+            CombatDamageReplyCommand => throw new ArgumentException(
+                "A combat damage reply command requires a requestId.", nameof(command)),
             _ => throw new ArgumentException($"Unsupported bridge command type: {command.GetType().Name}",
                 nameof(command))
         };

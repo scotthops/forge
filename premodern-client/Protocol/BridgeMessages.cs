@@ -85,11 +85,29 @@ public sealed record QueryMessage(
     int? HostCardId,
     string? HostCardName,
     IReadOnlyList<QueryChoice> Choices,
+    int? TotalDamage,
+    IReadOnlyList<CombatDamageRecipient> Recipients,
+    CombatDamageConstraints? Constraints,
     string? Offered,
     bool? Cancellable)
     : BridgeMessage(SchemaVersion, "query");
 
 public sealed record QueryChoice(int Id, string? Description, bool CanPlay);
+
+public sealed record CombatDamageRecipient(
+    string? Key,
+    string? EntityType,
+    int EntityId,
+    string? Name,
+    string? Role,
+    int Order,
+    int MinimumDamage);
+
+public sealed record CombatDamageConstraints(
+    bool OrderedAssignment,
+    bool DefenderRequiresLethalBlockers,
+    bool FreeAssignment,
+    bool MaySkip);
 
 public sealed record ErrorMessage(
     int SchemaVersion,

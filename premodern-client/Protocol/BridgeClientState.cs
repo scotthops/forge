@@ -61,7 +61,10 @@ public sealed class BridgeClientState
                 {
                     LastActionStatus = "Action rejected because the interaction changed. Choose again.";
                 }
-                if (error.RequestId != null && PendingQuery?.RequestId == error.RequestId)
+                bool retryableQueryError = error.Code is "invalidCombatDamageAssignment"
+                    or "invalidQueryChoice";
+                if (!retryableQueryError && error.RequestId != null
+                    && PendingQuery?.RequestId == error.RequestId)
                 {
                     PendingQuery = null;
                 }
@@ -97,6 +100,13 @@ public sealed class BridgeClientState
                     PendingQuery = null;
                 }
                 LastActionStatus = $"Sent reply for query {reply.RequestId}; waiting for Forge.";
+                break;
+            case CombatDamageReplyCommand reply:
+                if (PendingQuery?.RequestId == reply.RequestId)
+                {
+                    PendingQuery = null;
+                }
+                LastActionStatus = $"Sent combat damage for query {reply.RequestId}; waiting for Forge.";
                 break;
         }
     }

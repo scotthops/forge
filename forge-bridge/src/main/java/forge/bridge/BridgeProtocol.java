@@ -3,7 +3,10 @@ package forge.bridge;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import forge.game.GameEntityView;
 import forge.game.card.CardView;
+import forge.game.combat.CombatDamageAssignment;
+import forge.game.player.PlayerView;
 import forge.game.spellability.SpellAbilityView;
 
 import java.util.Collections;
@@ -37,6 +40,8 @@ final class BridgeProtocol implements AutoCloseable {
     private final AtomicLong requestIds = new AtomicLong();
     private final AtomicLong interactionSequences = new AtomicLong();
     private final Map<String, PendingChoiceQuery<?>> pendingChoiceQueries = new ConcurrentHashMap<>();
+    private final Map<String, PendingCombatDamageQuery> pendingCombatDamageQueries =
+            new ConcurrentHashMap<>();
     private Consumer<Command> actionHandler;
 
     BridgeProtocol(JsonLineTransport transport, BridgeGuiBase guiBase) {
@@ -95,24 +100,60 @@ final class BridgeProtocol implements AutoCloseable {
     }
 
     Map<CardView, Integer> queryCombatDamage(CardView attacker, List<CardView> blockers,
-            int damage) {
+            int damage, GameEntityView defender, boolean overrideOrder, boolean maySkip) {
         if (damage <= 0) {
             return Collections.emptyMap();
         }
-        if (blockers == null || blockers.isEmpty()) {
-            Map<CardView, Integer> assignment = new LinkedHashMap<>();
-            assignment.put(null, damage);
-            return assignment;
+
+        CombatDamageAssignment assignment = CombatDamageAssignment.create(attacker, blockers,
+                damage, defender, overrideOrder, maySkip);
+        if (assignment.recipients().isEmpty()) {
+            Map<CardView, Integer> fallback = new LinkedHashMap<>();
+            fallback.put(null, damage);
+            return fallback;
+        }
+        if (assignment.recipients().size() == 1) {
+            CombatDamageAssignment.Recipient only = assignment.recipients().get(0);
+            return assignment.toForgeResult(Map.of(only.key(), damage));
         }
 
-        CardView firstBlocker = blockers.get(0);
-        Map<CardView, Integer> assignment = Map.of(firstBlocker, damage);
-        String description = "Assign all " + damage + " combat damage to "
-                + clean(firstBlocker.getName());
-        return queryChoice("combatDamageAssignment", attacker,
-                Map.of(0, assignment),
-                List.of(new AbilityChoice(0, description, true)),
-                "combat damage assignment");
+        String requestId = "q-" + requestIds.incrementAndGet();
+        List<CombatDamageRecipient> recipients = assignment.recipients().stream()
+                .map(recipient -> new CombatDamageRecipient(
+                        recipient.key(), entityType(recipient.entity()), recipient.entity().getId(),
+                        clean(recipient.entity().getName()),
+                        recipient.role().name().toLowerCase(), recipient.order(),
+                        recipient.minimumDamage()))
+                .toList();
+        CombatDamageConstraints constraints = new CombatDamageConstraints(
+                assignment.orderedAssignment(),
+                assignment.defenderRequiresLethalBlockers(),
+                assignment.freeAssignment(), assignment.maySkip());
+        CombatDamageQueryMessage query = new CombatDamageQueryMessage(
+                "query", requestId, "combatDamageAssignment",
+                attacker == null ? null : attacker.getId(),
+                attacker == null ? null : clean(attacker.getName()), damage,
+                recipients, constraints);
+        PendingCombatDamageQuery pending = new PendingCombatDamageQuery(assignment, query,
+                new CompletableFuture<>());
+        pendingCombatDamageQueries.put(requestId, pending);
+        send(query);
+
+        try {
+            return pending.reply().get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            error("queryTimeout", "No reply received for combat damage assignment", requestId);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            error("queryInterrupted", "Combat damage assignment was interrupted", requestId);
+        } catch (ExecutionException e) {
+            error("queryCancelled",
+                    clean(e.getCause() == null ? e.getMessage() : e.getCause().getMessage()),
+                    requestId);
+        } finally {
+            pendingCombatDamageQueries.remove(requestId, pending);
+        }
+        return null;
     }
 
     private <T> T queryChoice(String kind, CardView hostCard, Map<Integer, T> choices,
@@ -216,18 +257,74 @@ final class BridgeProtocol implements AutoCloseable {
             error("invalidMessage", "Reply is missing string field 'requestId'", null);
             return;
         }
-        PendingChoiceQuery<?> pending = pendingChoiceQueries.get(requestId);
-        if (pending == null) {
+        PendingChoiceQuery<?> pendingChoice = pendingChoiceQueries.get(requestId);
+        PendingCombatDamageQuery pendingDamage = pendingCombatDamageQueries.get(requestId);
+        if (pendingChoice == null && pendingDamage == null) {
             error("staleRequestId", "No pending query has this requestId", requestId);
             return;
         }
+        if (pendingDamage != null) {
+            handleCombatDamageReply(input, requestId, pendingDamage);
+            return;
+        }
         Integer selectedId = integerField(input, "selectedId");
-        Object selected = selectedId == null ? null : pending.choices().get(selectedId);
+        Object selected = selectedId == null ? null : pendingChoice.choices().get(selectedId);
         if (selected == null) {
             error("invalidQueryChoice", "selectedId is not one of the offered choices", requestId);
             return;
         }
-        completePending(pending, selected);
+        completePending(pendingChoice, selected);
+    }
+
+    private void handleCombatDamageReply(JsonObject input, String requestId,
+            PendingCombatDamageQuery pending) {
+        Boolean skip = booleanField(input, "skip");
+        if (Boolean.TRUE.equals(skip)) {
+            if (!pending.assignment().maySkip()) {
+                rejectCombatDamageReply(requestId, pending,
+                        "This damage assignment cannot be skipped");
+                return;
+            }
+            pending.reply().complete(null);
+            return;
+        }
+
+        JsonElement assignmentsElement = input.get("assignments");
+        if (assignmentsElement == null || !assignmentsElement.isJsonArray()) {
+            rejectCombatDamageReply(requestId, pending,
+                    "Reply must contain an assignments array");
+            return;
+        }
+        Map<String, Integer> amounts = new LinkedHashMap<>();
+        for (JsonElement element : assignmentsElement.getAsJsonArray()) {
+            if (!element.isJsonObject()) {
+                rejectCombatDamageReply(requestId, pending,
+                        "Each assignment must be an object");
+                return;
+            }
+            JsonObject object = element.getAsJsonObject();
+            String recipientKey = stringField(object, "recipientKey");
+            Integer amount = integerField(object, "amount");
+            if (recipientKey == null || amount == null
+                    || amounts.putIfAbsent(recipientKey, amount) != null) {
+                rejectCombatDamageReply(requestId, pending,
+                        "Each recipient must have one integer damage amount");
+                return;
+            }
+        }
+
+        CombatDamageAssignment.Validation validation = pending.assignment().validate(amounts);
+        if (!validation.valid()) {
+            rejectCombatDamageReply(requestId, pending, validation.message());
+            return;
+        }
+        pending.reply().complete(pending.assignment().toForgeResult(amounts));
+    }
+
+    private void rejectCombatDamageReply(String requestId, PendingCombatDamageQuery pending,
+            String message) {
+        error("invalidCombatDamageAssignment", message, requestId);
+        send(pending.query());
     }
 
     @SuppressWarnings("unchecked")
@@ -265,6 +362,22 @@ final class BridgeProtocol implements AutoCloseable {
         }
     }
 
+    private static Boolean booleanField(JsonObject input, String name) {
+        JsonElement value = input.get(name);
+        return value != null && value.isJsonPrimitive()
+                && value.getAsJsonPrimitive().isBoolean() ? value.getAsBoolean() : null;
+    }
+
+    private static String entityType(GameEntityView entity) {
+        if (entity instanceof PlayerView) {
+            return "player";
+        }
+        if (entity instanceof CardView) {
+            return "card";
+        }
+        return "entity";
+    }
+
     private static String clean(String value) {
         return value == null ? null : value.replace('\n', ' ').replace('\r', ' ');
     }
@@ -274,9 +387,17 @@ final class BridgeProtocol implements AutoCloseable {
         pendingChoiceQueries.forEach((requestId, pending) ->
                 pending.reply().completeExceptionally(new IllegalStateException("Bridge protocol closed")));
         pendingChoiceQueries.clear();
+        pendingCombatDamageQueries.forEach((requestId, pending) ->
+                pending.reply().completeExceptionally(
+                        new IllegalStateException("Bridge protocol closed")));
+        pendingCombatDamageQueries.clear();
     }
 
     private record PendingChoiceQuery<T>(Map<Integer, T> choices, CompletableFuture<T> reply) { }
+
+    private record PendingCombatDamageQuery(CombatDamageAssignment assignment,
+                                            CombatDamageQueryMessage query,
+                                            CompletableFuture<Map<CardView, Integer>> reply) { }
 
     private record LifecycleMessage(String type, String event, String detail) { }
 
@@ -292,6 +413,20 @@ final class BridgeProtocol implements AutoCloseable {
     private record AbilityQueryMessage(String type, String requestId, String kind,
                                        Integer hostCardId, String hostCardName,
                                        List<AbilityChoice> choices) { }
+
+    private record CombatDamageRecipient(String key, String entityType, int entityId,
+                                         String name, String role, int order,
+                                         int minimumDamage) { }
+
+    private record CombatDamageConstraints(boolean orderedAssignment,
+                                           boolean defenderRequiresLethalBlockers,
+                                           boolean freeAssignment, boolean maySkip) { }
+
+    private record CombatDamageQueryMessage(String type, String requestId, String kind,
+                                            Integer hostCardId, String hostCardName,
+                                            int totalDamage,
+                                            List<CombatDamageRecipient> recipients,
+                                            CombatDamageConstraints constraints) { }
 
     private record UnsupportedQueryMessage(String type, String requestId, String kind,
                                            String offered, boolean replySupported) { }
