@@ -71,7 +71,7 @@ public class InputBlock extends InputSyncronizedBase {
     /** {@inheritDoc} */
     @Override
     protected final void showMessage() {
-        getController().pushBlockerCandidates(defender, combat);
+        getController().pushBlockerCandidates(defender, combat, currentAttacker);
         // could add "Reset Blockers" button
         Localizer localizer = Localizer.getInstance();
         getController().getGui().updateButtons(getOwner(), true, false, true);

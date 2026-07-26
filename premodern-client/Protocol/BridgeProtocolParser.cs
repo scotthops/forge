@@ -96,6 +96,14 @@ public static class BridgeProtocolParser
                 ParseCards(item, "targets")));
         }
 
+        List<CombatSnapshot> combat = [];
+        foreach (JsonElement assignment in Array(root, "combat"))
+        {
+            combat.Add(new CombatSnapshot(
+                Int32(assignment, "attackerCardId"),
+                ParseIds(assignment, "blockerCardIds")));
+        }
+
         return new StateMessage(
             schemaVersion,
             String(root, "source"),
@@ -105,7 +113,8 @@ public static class BridgeProtocolParser
             NullableInt32(root, "activePlayerId"),
             NullableInt32(root, "priorityPlayerId"),
             players,
-            stack);
+            stack,
+            combat);
     }
 
     private static InteractionMessage ParseInteraction(int schemaVersion, JsonElement root)
@@ -129,6 +138,8 @@ public static class BridgeProtocolParser
             String(root, "prompt"),
             ParseIds(root, "weaklySelectableCardIds"),
             ParseIds(root, "selectableCardIds"),
+            ParseIds(root, "combatSelectableCardIds"),
+            ParseIds(root, "highlightedCardIds"),
             ParseIds(root, "selectablePlayerIds"),
             Int32(root, "min"),
             Int32(root, "max"),

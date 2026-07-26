@@ -1634,29 +1634,23 @@ public class PlayerControllerHuman extends PlayerController implements IGameCont
         getGui().setWeaklySelectable(result);
     }
 
-    /** Push defenders that could block at least one current attacker. */
-    public void pushBlockerCandidates(final Player defendingPlayer, final Combat combat) {
+    /** Push defenders that can be toggled for the currently selected attacker. */
+    public void pushBlockerCandidates(final Player defendingPlayer, final Combat combat,
+            final Card currentAttacker) {
         if (!yieldController.getBoolPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS)) {
             getGui().clearWeaklySelectable();
             return;
         }
         final Set<CardView> result = Sets.newHashSet();
-        if (combat == null) {
+        if (combat == null || currentAttacker == null) {
             getGui().setWeaklySelectable(result);
             return;
         }
-        final Iterable<Card> attackers = combat.getAttackers();
         for (final Card blocker : defendingPlayer.getCreaturesInPlay()) {
-            if (!CombatUtil.canBlock(blocker)) continue;
-            // Only highlight if the blocker can block at least one live attacker.
-            boolean canBlockSomething = false;
-            for (final Card atk : attackers) {
-                if (CombatUtil.canBlock(atk, blocker, combat)) {
-                    canBlockSomething = true;
-                    break;
-                }
-            }
-            if (canBlockSomething) {
+            // An accepted assignment remains selectable so the player can toggle it off.
+            if (combat.isBlocking(blocker, currentAttacker)
+                    || (CombatUtil.canBlock(blocker)
+                    && CombatUtil.canBlock(currentAttacker, blocker, combat))) {
                 result.add(blocker.getView());
             }
         }

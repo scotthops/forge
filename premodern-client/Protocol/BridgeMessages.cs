@@ -31,7 +31,8 @@ public sealed record StateMessage(
     int? ActivePlayerId,
     int? PriorityPlayerId,
     IReadOnlyList<PlayerSnapshot> Players,
-    IReadOnlyList<StackSnapshot> Stack)
+    IReadOnlyList<StackSnapshot> Stack,
+    IReadOnlyList<CombatSnapshot> Combat)
     : BridgeMessage(SchemaVersion, "state");
 
 public sealed record PlayerSnapshot(
@@ -58,6 +59,10 @@ public sealed record StackSnapshot(
     CardSnapshot? Source,
     IReadOnlyList<CardSnapshot> Targets);
 
+public sealed record CombatSnapshot(
+    int AttackerCardId,
+    IReadOnlyList<int> BlockerCardIds);
+
 public sealed record InteractionMessage(
     int SchemaVersion,
     long InteractionSequence,
@@ -65,6 +70,8 @@ public sealed record InteractionMessage(
     string? Prompt,
     IReadOnlyList<int> WeaklySelectableCardIds,
     IReadOnlyList<int> SelectableCardIds,
+    IReadOnlyList<int> CombatSelectableCardIds,
+    IReadOnlyList<int> HighlightedCardIds,
     IReadOnlyList<int> SelectablePlayerIds,
     int Min,
     int Max,

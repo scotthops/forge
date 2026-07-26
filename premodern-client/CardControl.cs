@@ -22,12 +22,23 @@ public partial class CardControl : Control
 	private PanelContainer fallback = null!;
 	private Label fallbackName = null!;
 	private Panel actionableFrame = null!;
+	private Panel selectedFrame = null!;
+	private Panel attackingFrame = null!;
+	private Panel blockingFrame = null!;
+	private PanelContainer attackingBadge = null!;
+	private PanelContainer relationshipBadge = null!;
+	private Label relationshipLabel = null!;
 	private string displayName = string.Empty;
 	private Texture2D? texture;
 	private bool primaryPressStarted;
+	private bool primaryActionEnabled;
 	private bool tappedLayoutEnabled;
+	private string relationshipText = string.Empty;
 
 	public bool Actionable { get; private set; }
+	public bool Selected { get; private set; }
+	public bool Attacking { get; private set; }
+	public bool Blocking { get; private set; }
 	public bool Tapped { get; private set; }
 
 	public override void _Ready()
@@ -37,6 +48,12 @@ public partial class CardControl : Control
 		fallback = GetNode<PanelContainer>("%Fallback");
 		fallbackName = GetNode<Label>("%FallbackName");
 		actionableFrame = GetNode<Panel>("%ActionableFrame");
+		selectedFrame = GetNode<Panel>("%SelectedFrame");
+		attackingFrame = GetNode<Panel>("%AttackingFrame");
+		blockingFrame = GetNode<Panel>("%BlockingFrame");
+		attackingBadge = GetNode<PanelContainer>("%AttackingBadge");
+		relationshipBadge = GetNode<PanelContainer>("%RelationshipBadge");
+		relationshipLabel = GetNode<Label>("%RelationshipLabel");
 		MouseExited += () => primaryPressStarted = false;
 		Resized += RefreshVisualState;
 		RefreshDisplay();
@@ -57,6 +74,47 @@ public partial class CardControl : Control
 	public void SetActionable(bool actionable)
 	{
 		Actionable = actionable;
+		if (IsNodeReady())
+		{
+			RefreshVisualState();
+		}
+	}
+
+	public void SetPrimaryActionEnabled(bool enabled)
+	{
+		primaryActionEnabled = enabled;
+	}
+
+	public void SetSelected(bool selected)
+	{
+		Selected = selected;
+		if (IsNodeReady())
+		{
+			RefreshVisualState();
+		}
+	}
+
+	public void SetAttacking(bool attacking)
+	{
+		Attacking = attacking;
+		if (IsNodeReady())
+		{
+			RefreshVisualState();
+		}
+	}
+
+	public void SetBlocking(bool blocking)
+	{
+		Blocking = blocking;
+		if (IsNodeReady())
+		{
+			RefreshVisualState();
+		}
+	}
+
+	public void SetRelationshipText(string text)
+	{
+		relationshipText = text;
 		if (IsNodeReady())
 		{
 			RefreshVisualState();
@@ -102,7 +160,7 @@ public partial class CardControl : Control
 
 		if (mouseButton.Pressed)
 		{
-			primaryPressStarted = Actionable && pointerOverVisual;
+			primaryPressStarted = primaryActionEnabled && pointerOverVisual;
 			if (pointerOverVisual)
 			{
 				AcceptEvent();
@@ -110,7 +168,7 @@ public partial class CardControl : Control
 			return;
 		}
 
-		bool requestAction = primaryPressStarted && Actionable && pointerOverVisual;
+		bool requestAction = primaryPressStarted && primaryActionEnabled && pointerOverVisual;
 		primaryPressStarted = false;
 		if (!pointerOverVisual)
 		{
@@ -147,6 +205,12 @@ public partial class CardControl : Control
 		visualRoot.PivotOffset = MiniatureSize / 2f;
 		visualRoot.RotationDegrees = Tapped ? 90f : 0f;
 		actionableFrame.Visible = Actionable;
+		selectedFrame.Visible = Selected;
+		attackingFrame.Visible = Attacking;
+		blockingFrame.Visible = Blocking;
+		attackingBadge.Visible = Attacking;
+		relationshipLabel.Text = relationshipText;
+		relationshipBadge.Visible = !string.IsNullOrWhiteSpace(relationshipText);
 	}
 
 	private bool IsPointerOverVisual()

@@ -181,6 +181,12 @@ public partial class Main : Control
 			: interaction.WeaklySelectableCardIds
 				.Concat(interaction.SelectableCardIds)
 				.ToHashSet();
+		HashSet<int> primaryActionCards = interaction == null
+			? []
+			: selectableCards
+				.Concat(interaction.CombatSelectableCardIds)
+				.ToHashSet();
+		HashSet<int> highlightedCards = interaction?.HighlightedCardIds.ToHashSet() ?? [];
 
 		PlayerSnapshot? localPlayer = FindLocalPlayer(state);
 		PlayerSnapshot? opponent = state?.Players.FirstOrDefault(player => player.Id != localPlayer?.Id);
@@ -191,14 +197,17 @@ public partial class Main : Control
 		RenderTurnAndPhase(state, localPlayer);
 
 		RenderBattlefieldRows(opponentNonlands, opponentLands,
-			opponent?.Battlefield ?? [], selectableCards,
+			opponent?.Battlefield ?? [], selectableCards, primaryActionCards,
+			highlightedCards, state,
 			interaction?.InteractionSequence);
 		RenderCardButtons(opponentGraveyard, opponent?.Graveyard ?? [], selectableCards,
 			interaction?.InteractionSequence);
 		RenderBattlefieldRows(yourNonlands, yourLands,
-			localPlayer?.Battlefield ?? [], selectableCards,
+			localPlayer?.Battlefield ?? [], selectableCards, primaryActionCards,
+			highlightedCards, state,
 			interaction?.InteractionSequence);
 		RenderImageCards(yourHand, localPlayer?.HandVisible ?? [], selectableCards,
+			primaryActionCards, highlightedCards, state,
 			interaction?.InteractionSequence);
 		RenderCardButtons(yourGraveyard, localPlayer?.Graveyard ?? [], selectableCards,
 			interaction?.InteractionSequence);
@@ -213,16 +222,20 @@ public partial class Main : Control
 
 	private void RenderBattlefieldRows(FlowContainer nonlandRow, FlowContainer landRow,
 		IReadOnlyList<CardSnapshot> cards, HashSet<int> selectableIds,
+		HashSet<int> primaryActionIds, HashSet<int> highlightedIds, StateMessage? state,
 		long? interactionSequence)
 	{
 		RenderImageCards(nonlandRow, cards.Where(card => !card.IsLand).ToArray(),
-			selectableIds, interactionSequence, renderTappedState: true);
+			selectableIds, primaryActionIds, highlightedIds, state,
+			interactionSequence, renderTappedState: true);
 		RenderImageCards(landRow, cards.Where(card => card.IsLand).ToArray(),
-			selectableIds, interactionSequence, renderTappedState: true);
+			selectableIds, primaryActionIds, highlightedIds, state,
+			interactionSequence, renderTappedState: true);
 	}
 
 	private void RenderImageCards(Container container, IReadOnlyList<CardSnapshot> cards,
-		HashSet<int> selectableIds, long? interactionSequence,
+		HashSet<int> selectableIds, HashSet<int> primaryActionIds,
+		HashSet<int> highlightedIds, StateMessage? state, long? interactionSequence,
 		bool renderTappedState = false)
 	{
 		ClearChildren(container);
@@ -237,6 +250,15 @@ public partial class Main : Control
 			bool actionable = interactionSequence != null
 				&& selectableIds.Contains(card.Id)
 				&& CanSendAsync();
+			bool primaryActionEnabled = interactionSequence != null
+				&& primaryActionIds.Contains(card.Id)
+				&& CanSendAsync();
+			bool attacking = state?.Combat.Any(
+				assignment => assignment.AttackerCardId == card.Id) == true;
+			bool blocking = state?.Combat.Any(
+				assignment => assignment.BlockerCardIds.Contains(card.Id)) == true;
+			bool selected = highlightedIds.Contains(card.Id);
+			string relationshipText = CombatRelationshipText(card.Id, state);
 			Texture2D? texture = null;
 			if (!card.Hidden && !string.IsNullOrWhiteSpace(card.Name)
 				&& cardImages.TryGetTexture(card.Name, out Texture2D resolvedTexture))
@@ -251,10 +273,14 @@ public partial class Main : Control
 			cardControl.Configure(
 				displayName,
 				texture,
-				actionable
-					? $"Forge selectable | {Value(card.Zone)} | id={card.Id}"
-					: $"{Value(card.Zone)} | id={card.Id}");
+				CardTooltip(card, actionable, primaryActionEnabled, attacking,
+					blocking, selected, relationshipText));
 			cardControl.SetActionable(actionable);
+			cardControl.SetPrimaryActionEnabled(primaryActionEnabled);
+			cardControl.SetSelected(selected);
+			cardControl.SetAttacking(attacking);
+			cardControl.SetBlocking(blocking);
+			cardControl.SetRelationshipText(relationshipText);
 			if (renderTappedState)
 			{
 				cardControl.SetTapped(card.Tapped);
@@ -445,6 +471,11 @@ public partial class Main : Control
 	private static string? PlayerFacingPrompt(InteractionMessage interaction, StateMessage? state,
 		PlayerSnapshot? localPlayer)
 	{
+		if (IsDeclareBlockers(state, interaction))
+		{
+			return BlockerDeclarationPrompt(interaction, state!);
+		}
+
 		if (string.IsNullOrWhiteSpace(interaction.Prompt))
 		{
 			return null;
@@ -484,6 +515,58 @@ public partial class Main : Control
 		}
 
 		return trimmed;
+	}
+
+	private static bool IsDeclareBlockers(StateMessage? state, InteractionMessage interaction)
+	{
+		return string.Equals(state?.Phase, "COMBAT_DECLARE_BLOCKERS",
+			StringComparison.OrdinalIgnoreCase)
+			&& (state!.Combat.Count > 0 || interaction.CombatSelectableCardIds.Count > 0);
+	}
+
+	private static string BlockerDeclarationPrompt(InteractionMessage interaction,
+		StateMessage state)
+	{
+		HashSet<int> attackerIds = state.Combat
+			.Select(assignment => assignment.AttackerCardId)
+			.ToHashSet();
+		int? selectedAttackerId = interaction.HighlightedCardIds
+			.FirstOrDefault(attackerIds.Contains);
+		if (selectedAttackerId == 0 && !attackerIds.Contains(0))
+		{
+			selectedAttackerId = null;
+		}
+
+		List<string> lines = ["DECLARE BLOCKERS", string.Empty];
+		if (selectedAttackerId.HasValue)
+		{
+			string attackerName = CardNameById(state, selectedAttackerId.Value);
+			lines.Add($"Current attacker: {attackerName}");
+			lines.Add(interaction.WeaklySelectableCardIds.Count > 0
+				? "Select a green creature to block it. Click it again to remove that assignment."
+				: "Forge offers no blocker that can be toggled for this attacker.");
+		}
+		else
+		{
+			lines.Add("Select an orange attacking creature to choose its blockers.");
+		}
+
+		lines.Add(string.Empty);
+		lines.Add("ASSIGNMENTS");
+		List<string> assignments = state.Combat
+			.SelectMany(combat => combat.BlockerCardIds.Select(blockerId =>
+				$"{CardNameById(state, blockerId)} → "
+				+ CardNameById(state, combat.AttackerCardId)))
+			.ToList();
+		lines.AddRange(assignments.Count == 0
+			? ["None — leaving this empty declares no blockers if Forge permits it."]
+			: assignments);
+
+		lines.Add(string.Empty);
+		string confirmLabel = Value(interaction.Buttons.OkLabel);
+		lines.Add($"Select another attacker to review or change its blockers. "
+			+ $"Press {confirmLabel} when finished; Forge validates the declaration.");
+		return string.Join("\n", lines);
 	}
 
 	private static bool IsRoutinePriorityStatus(string prompt)
@@ -798,6 +881,63 @@ public partial class Main : Control
 				? source
 				: $"{source} → {string.Join(", ", item.Targets.Select(CardName))}";
 		}));
+	}
+
+	private static string CombatRelationshipText(int cardId, StateMessage? state)
+	{
+		if (state == null)
+		{
+			return string.Empty;
+		}
+
+		List<string> relationships = [];
+		CombatSnapshot? attacking = state.Combat.FirstOrDefault(
+			assignment => assignment.AttackerCardId == cardId);
+		if (attacking != null && attacking.BlockerCardIds.Count > 0)
+		{
+			relationships.Add("BLOCKED BY:\n" + string.Join(", ",
+				attacking.BlockerCardIds.Select(id => CardNameById(state, id))));
+		}
+
+		List<int> blockedAttackers = state.Combat
+			.Where(assignment => assignment.BlockerCardIds.Contains(cardId))
+			.Select(assignment => assignment.AttackerCardId)
+			.ToList();
+		if (blockedAttackers.Count > 0)
+		{
+			relationships.Add("BLOCKING:\n" + string.Join(", ",
+				blockedAttackers.Select(id => CardNameById(state, id))));
+		}
+		return string.Join("\n", relationships);
+	}
+
+	private static string CardTooltip(CardSnapshot card, bool actionable,
+		bool primaryActionEnabled, bool attacking, bool blocking, bool selected,
+		string relationshipText)
+	{
+		List<string> states = [];
+		if (actionable) states.Add("Forge selectable");
+		else if (primaryActionEnabled) states.Add("Forge combat selectable");
+		if (selected) states.Add("selected");
+		if (attacking) states.Add("attacking");
+		if (blocking) states.Add("blocking");
+		if (!string.IsNullOrWhiteSpace(relationshipText))
+		{
+			states.Add(relationshipText.Replace('\n', ' '));
+		}
+		states.Add(Value(card.Zone));
+		states.Add($"id={card.Id}");
+		return string.Join(" | ", states);
+	}
+
+	private static string CardNameById(StateMessage state, int cardId)
+	{
+		CardSnapshot? card = state.Players
+			.SelectMany(player => player.HandVisible
+				.Concat(player.Battlefield)
+				.Concat(player.Graveyard))
+			.FirstOrDefault(candidate => candidate.Id == cardId);
+		return card == null ? $"Card #{cardId}" : CardName(card);
 	}
 
 	private static void ClearChildren(Node parent)

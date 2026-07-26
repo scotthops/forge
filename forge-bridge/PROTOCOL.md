@@ -31,6 +31,26 @@ Visible card snapshots include `isLand`, derived from the card's current Forge t
 `true` for any card whose current type includes Land, including artifact lands and creature lands.
 It is always `false` for hidden cards so the projection does not reveal private type information.
 
+State messages also include `combat`, one entry per attacking card:
+
+```json
+{"attackerCardId":101,"blockerCardIds":[201,202]}
+```
+
+The IDs come from Forge's `CombatView`. During blocker declaration, `blockerCardIds` reflects
+Forge's current planned blockers, so a relationship appears only after Forge has processed the
+selection and published authoritative state. An attacker with no blockers has an empty array.
+Multiple blockers and multiple attackers are represented without UI-derived history.
+
+Interaction card states remain semantically separate:
+
+- `weaklySelectableCardIds` and `selectableCardIds` are ordinary Forge-offered actionable cards.
+- `combatSelectableCardIds` are attacking cards Forge permits as combat-navigation choices during
+  blocker declaration. Clients may make them clickable without rendering the ordinary actionable
+  treatment.
+- `highlightedCardIds` are Forge's current highlighted/selected cards. During blocker declaration,
+  this includes the attacker whose blockers are currently being edited.
+
 ## Client To Forge
 
 - `selectCard`: Select a currently offered card by ID.
@@ -74,7 +94,7 @@ the still-pending query with the same `requestId` so the client can correct the 
 Asynchronous interaction and action:
 
 ```json
-{"schemaVersion":1,"type":"interaction","interactionSequence":42,"reason":"selectables","prompt":"Choose a card","weaklySelectableCardIds":[],"selectableCardIds":[123],"selectablePlayerIds":[],"min":1,"max":1,"buttons":{"okLabel":"OK","cancelLabel":"Cancel","okEnabled":false,"cancelEnabled":true,"focusOk":false}}
+{"schemaVersion":1,"type":"interaction","interactionSequence":42,"reason":"selectables","prompt":"Choose a card","weaklySelectableCardIds":[],"selectableCardIds":[123],"combatSelectableCardIds":[],"highlightedCardIds":[],"selectablePlayerIds":[],"min":1,"max":1,"buttons":{"okLabel":"OK","cancelLabel":"Cancel","okEnabled":false,"cancelEnabled":true,"focusOk":false}}
 {"schemaVersion":1,"type":"selectCard","interactionSequence":42,"cardId":123}
 ```
 

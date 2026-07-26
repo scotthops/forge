@@ -2,6 +2,7 @@ package forge.bridge;
 
 import forge.game.GameView;
 import forge.game.card.CardView;
+import forge.game.combat.CombatView;
 import forge.game.player.PlayerView;
 import forge.game.spellability.StackItemView;
 import forge.game.zone.ZoneType;
@@ -9,6 +10,7 @@ import forge.game.zone.ZoneType;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 
 final class BridgePrinter {
@@ -68,6 +70,17 @@ final class BridgePrinter {
         printInteraction("weaklySelectable");
     }
 
+    synchronized void combatSelectable(Iterable<CardView> cards,
+            Collection<PlayerView> localPlayers) {
+        interaction = interaction.withCombatSelectable(cardIds(cards, localPlayers));
+        printInteraction("combatSelectable");
+    }
+
+    synchronized void highlighted(Iterable<CardView> cards, Collection<PlayerView> localPlayers) {
+        interaction = interaction.withHighlighted(cardIds(cards, localPlayers));
+        printInteraction("highlighted");
+    }
+
     private void printInteraction(String reason) {
         protocol.send(new InteractionMessage(
                 "interaction",
@@ -76,6 +89,8 @@ final class BridgePrinter {
                 interaction.prompt(),
                 interaction.weaklySelectableCardIds(),
                 interaction.selectableCardIds(),
+                interaction.combatSelectableCardIds(),
+                interaction.highlightedCardIds(),
                 interaction.selectablePlayerIds(),
                 interaction.min(),
                 interaction.max(),
@@ -86,7 +101,8 @@ final class BridgePrinter {
             Collection<PlayerView> localPlayers) {
         if (gameView == null) {
             return new StateMessage("state", source, sequenceNumber, 0, null,
-                    null, null, Collections.emptyList(), Collections.emptyList());
+                    null, null, Collections.emptyList(), Collections.emptyList(),
+                    Collections.emptyList());
         }
         List<PlayerSnapshot> players = new ArrayList<>();
         Integer priorityPlayerId = null;
@@ -126,7 +142,28 @@ final class BridgePrinter {
                 gameView.getPlayerTurn() == null ? null : gameView.getPlayerTurn().getId(),
                 priorityPlayerId,
                 List.copyOf(players),
-                List.copyOf(stack));
+                List.copyOf(stack),
+                snapshotCombat(gameView.getCombat()));
+    }
+
+    static List<CombatSnapshot> snapshotCombat(CombatView combat) {
+        if (combat == null) {
+            return Collections.emptyList();
+        }
+        List<CardView> attackers = new ArrayList<>();
+        combat.getAttackers().forEach(attackers::add);
+        attackers.sort(Comparator.comparingInt(CardView::getId));
+
+        List<CombatSnapshot> result = new ArrayList<>();
+        for (CardView attacker : attackers) {
+            List<Integer> blockerIds = new ArrayList<>();
+            Collection<CardView> blockers = combat.getPlannedBlockers(attacker);
+            if (blockers != null) {
+                blockers.forEach(blocker -> blockerIds.add(blocker.getId()));
+            }
+            result.add(new CombatSnapshot(attacker.getId(), List.copyOf(blockerIds)));
+        }
+        return List.copyOf(result);
     }
 
     private static List<CardSnapshot> snapshotCards(Iterable<CardView> cards,
@@ -176,7 +213,8 @@ final class BridgePrinter {
 
     private record StateMessage(String type, String source, long stateSequence, int turn, String phase,
                                 Integer activePlayerId, Integer priorityPlayerId,
-                                List<PlayerSnapshot> players, List<StackSnapshot> stack) { }
+                                List<PlayerSnapshot> players, List<StackSnapshot> stack,
+                                List<CombatSnapshot> combat) { }
 
     private record PlayerSnapshot(int id, String name, int life, boolean hasPriority, int handCount,
                                   List<CardSnapshot> handVisible,
@@ -189,9 +227,13 @@ final class BridgePrinter {
     private record StackSnapshot(int id, String text, CardSnapshot source,
                                  List<CardSnapshot> targets) { }
 
+    record CombatSnapshot(int attackerCardId, List<Integer> blockerCardIds) { }
+
     private record InteractionMessage(String type, long interactionSequence, String reason, String prompt,
                                       List<Integer> weaklySelectableCardIds,
                                       List<Integer> selectableCardIds,
+                                      List<Integer> combatSelectableCardIds,
+                                      List<Integer> highlightedCardIds,
                                       List<Integer> selectablePlayerIds,
                                       int min, int max, ButtonSnapshot buttons) { }
 
@@ -200,37 +242,51 @@ final class BridgePrinter {
 
     private record InteractionSnapshot(String prompt, List<Integer> weaklySelectableCardIds,
                                        List<Integer> selectableCardIds,
+                                       List<Integer> combatSelectableCardIds,
+                                       List<Integer> highlightedCardIds,
                                        List<Integer> selectablePlayerIds, int min, int max,
                                        ButtonSnapshot buttons) {
         private static InteractionSnapshot empty() {
             return new InteractionSnapshot(null, Collections.emptyList(), Collections.emptyList(),
-                    Collections.emptyList(), 0, 0,
+                    Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), 0, 0,
                     new ButtonSnapshot(null, null, false, false, false));
         }
 
         private InteractionSnapshot withPrompt(String value, List<Integer> playerIds) {
             return new InteractionSnapshot(value, weaklySelectableCardIds, selectableCardIds,
-                    playerIds, min, max, buttons);
+                    combatSelectableCardIds, highlightedCardIds, playerIds, min, max, buttons);
         }
 
         private InteractionSnapshot withButtons(ButtonSnapshot value) {
             return new InteractionSnapshot(prompt, weaklySelectableCardIds, selectableCardIds,
-                    selectablePlayerIds, min, max, value);
+                    combatSelectableCardIds, highlightedCardIds, selectablePlayerIds, min, max, value);
         }
 
         private InteractionSnapshot withSelectables(List<Integer> value, int newMin, int newMax) {
             return new InteractionSnapshot(prompt, weaklySelectableCardIds, value,
-                    selectablePlayerIds, newMin, newMax, buttons);
+                    combatSelectableCardIds, highlightedCardIds, selectablePlayerIds,
+                    newMin, newMax, buttons);
         }
 
         private InteractionSnapshot withSelectablePlayers(List<Integer> value) {
             return new InteractionSnapshot(prompt, weaklySelectableCardIds, selectableCardIds,
-                    value, min, max, buttons);
+                    combatSelectableCardIds, highlightedCardIds, value, min, max, buttons);
         }
 
         private InteractionSnapshot withWeaklySelectable(List<Integer> value) {
             return new InteractionSnapshot(prompt, value, selectableCardIds,
-                    selectablePlayerIds, min, max, buttons);
+                    combatSelectableCardIds, highlightedCardIds, selectablePlayerIds,
+                    min, max, buttons);
+        }
+
+        private InteractionSnapshot withCombatSelectable(List<Integer> value) {
+            return new InteractionSnapshot(prompt, weaklySelectableCardIds, selectableCardIds,
+                    value, highlightedCardIds, selectablePlayerIds, min, max, buttons);
+        }
+
+        private InteractionSnapshot withHighlighted(List<Integer> value) {
+            return new InteractionSnapshot(prompt, weaklySelectableCardIds, selectableCardIds,
+                    combatSelectableCardIds, value, selectablePlayerIds, min, max, buttons);
         }
     }
 }

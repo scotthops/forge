@@ -144,6 +144,7 @@ Bridge stdout is reserved for JSONL. Forge diagnostics are redirected to stderr 
 - [x] Strict `interactionSequence` stale-action protection.
 - [x] Correlated ability-choice queries using `requestId`.
 - [x] Structured combat-damage assignment with ordered recipients, lethal minima, player/card defenders, validation, retry, and optional skip.
+- [x] Authoritative combat projection with attacking card IDs, planned blocker relationships, combat-navigation attacker IDs, and Forge-highlighted selected card IDs.
 - [x] Action-accepted acknowledgements and lifecycle/controller messages.
 
 ### Godot Client
@@ -155,6 +156,7 @@ Bridge stdout is reserved for JSONL. Forge diagnostics are redirected to stderr 
 - [x] Card and player selection, Forge-labelled OK/Cancel controls, and pass priority.
 - [x] Ability-choice panel and correlated replies.
 - [x] Combat-damage editor with client-side guidance plus authoritative bridge validation.
+- [x] Attacker-first blocker declaration UI matching Forge's real input flow, with distinct attacker/current-attacker/legal-blocker/blocking states and persistent authoritative relationship text.
 - [x] Opening-hand Keep/Mulligan controls and London-mulligan card selection/Auto button path.
 - [x] Graceful bridge disposal on scene exit, with forced child termination as a fallback.
 
@@ -164,7 +166,7 @@ Bridge stdout is reserved for JSONL. Forge diagnostics are redirected to stderr 
 - [x] Land play through the remote controller.
 - [x] Targeted spell selection, ability selection, card target, player target, mana-source selection, stack observation, pass priority, and authoritative resolution are represented in code/tests.
 - [x] Single unambiguous triggered ability handling, including the Jackal Pup regression.
-- [x] Attacker/blocker card selection primitives and structured combat-damage assignment.
+- [x] Attacker/blocker declaration with authoritative relationship presentation and structured combat-damage assignment.
 - [ ] All required callbacks encountered by a complete Sligh game.
 - [ ] Verified networked Ball Lightning trample playthrough.
 - [ ] Complete game through lethal.
@@ -180,6 +182,7 @@ Bridge stdout is reserved for JSONL. Forge diagnostics are redirected to stderr 
 - [x] Current-action prompt and Forge button controls.
 - [x] Image-backed reusable `CardControl` for hand and battlefield.
 - [x] Green actionable frame and 90-degree tapped rendering.
+- [x] Separate orange attacking, gold selected, and blue blocking states with blocker relationship badges.
 - [x] Right-click preview and missing-image/name fallback.
 
 ### Testing
@@ -234,9 +237,11 @@ Forge still loads and knows its much larger card database (the current test init
 
 `Main.cs` rebuilds the zone controls from each authoritative state message. Empty battlefield rows remain present, avoiding large layout jumps. Forge's dynamic `isLand` value selects the battlefield row.
 
-The same `CardControl` is used for visible hand and battlefield cards. Left-click requests the current Forge action only when the card ID is offered. Right-click opens the local preview. A green frame marks actionable cards; tapped battlefield cards rotate 90 degrees. Graveyards currently use compact text buttons with right-click preview rather than `CardControl`.
+The same `CardControl` is used for visible hand and battlefield cards. Left-click requests the current Forge action only when the card ID is offered. Right-click opens the local preview. A green frame marks ordinary actionable cards; orange marks attackers, gold marks Forge's current selected attacker, and blue plus relationship text marks blocking assignments. Tapped battlefield cards rotate 90 degrees. Graveyards currently use compact text buttons with right-click preview rather than `CardControl`.
 
-Player selection uses the local/opponent headers. The stack is currently a single text line showing source and card targets; it is not an interactive card stack and does not display player targets. Combat has no dedicated attacker/blocker visualization even though Forge can offer the underlying card selections.
+Player selection uses the local/opponent headers. The stack is currently a single text line showing source and card targets; it is not an interactive card stack and does not display player targets. Combat uses card-local markers and relationship text rather than a dedicated combat layout.
+
+Blocker declaration follows Forge's attacker-first `InputBlock` model: Forge selects an attacker, Godot shows only Forge-computed legal blockers for that attacker, and accepted planned blocker relationships remain visible from authoritative combat state. The player can revisit an attacker and toggle an assigned blocker off before pressing Forge's OK button. There is no one-click reset control.
 
 The UI is a practical vertical slice, not final visual polish.
 
@@ -380,9 +385,9 @@ Such artifacts could later support regression tests, replay/debug tools, and dif
 - A complete Sligh playthrough through lethal has not been demonstrated or automated.
 - The bridge still reports `unsupportedQuery` and stops for required callbacks including generic amount assignment, confirm/option/input dialogs, general `getChoices`, ordering, sideboarding, entity-choice helpers, and card-list manipulation. A real Sligh playthrough must determine which need generic implementations now.
 - `BridgeGuiGame` leaves many purely visual Forge GUI callbacks as no-ops. Authoritative full/delta state covers the implemented zones, but combat presentation is especially thin.
-- State projection currently includes visible hand, battlefield, graveyard, and stack. It does not provide a complete combat graph, exile/library views, mana pool, game result screen, or every temporary/revealed zone.
+- State projection currently includes visible hand, battlefield, graveyard, stack, and attacker/planned-blocker relationships. It does not provide combat defenders, exile/library views, mana pool, game result screen, or every temporary/revealed zone.
 - The stack UI is one clipped text line, shows card targets only, and is not interactive.
-- There is no dedicated attacker/blocker layout or combat-state visualization.
+- Blocker declaration now has combat-state visualization, but there is no dedicated combat layout, drag interaction, or one-click blocker reset.
 - The Sligh host is one Godot human versus AI. Two remote humans, coordinated startup, match completion, and rematch/lobby UX are not built.
 - Remote-friend connectivity, firewall/NAT guidance, packaging, and distribution are not finished. Defaults assume localhost development.
 - Artwork requires external developer setup and card-name-based filenames.
@@ -396,6 +401,7 @@ Important custom coverage:
 
 - `AbilitySelectionBridgeTest` — single unambiguous trigger behavior and correlated multi-choice ability replies.
 - `CombatDamageBridgeTest` — Ball Lightning-style trample assignment, one/multiple blockers, ordered lethal constraints, invalid-reply retry, unblocked/single-recipient fast paths, and zero damage.
+- `CombatStateBridgeTest` — authoritative combat projection for no blocker, one blocker, multiple blockers, and multiple attackers using Forge planned-blocker state.
 - `StandaloneBridgeIntegrationTest` — a real bridge process connects, receives a normal network controller, emits versioned controller/state/interaction messages, and hides the opponent hand.
 - `SlighMirrorH1Test` — exact deck recipe for both players, standalone bridge opening hand/mulligan controls, and a shuffled remote-human game reaching an ordinary turn.
 - `NetworkPlayIntegrationTest` / `NetworkInteractionProbe` — network state/delta observation plus scripted land and targeted-spell controller paths.
@@ -408,7 +414,7 @@ Verification performed for this status snapshot:
 
 - Maven package command: **passed**.
 - Godot C# `dotnet build`: **passed**, 0 warnings and 0 errors.
-- Bridge unit tests: **8/8 passed** (2 ability + 6 combat-damage).
+- Bridge unit tests: **12/12 passed** (2 ability + 6 combat-damage + 4 combat-state).
 - Selected desktop tests other than JSON: **11/11 invocations passed** (shutdown 2, Sligh 3, standalone bridge 1, blocking 4, Jackal Pup 1).
 - `JsonBridgeIntegrationTest`: **0/3 passed** in both combined and isolated reruns; see section 12.
 
@@ -471,4 +477,3 @@ When continuing this project:
 6. Do not casually modify unrelated upstream Forge code; investigate the existing controller/network path first.
 7. Distinguish observed code/test behavior from architectural recommendations.
 8. Preserve useful deterministic scenarios, logs, and expected state transitions when doing so helps the current milestone.
-

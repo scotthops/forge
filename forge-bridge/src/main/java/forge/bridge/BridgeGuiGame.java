@@ -27,6 +27,7 @@ import forge.util.ITriggerEvent;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +45,8 @@ public final class BridgeGuiGame extends NetworkGuiGame {
     private final Listener listener;
     private final Map<Integer, CardView> selectableCards = new LinkedHashMap<>();
     private final Map<Integer, CardView> weaklySelectableCards = new LinkedHashMap<>();
+    private final Map<Integer, CardView> combatSelectableCards = new LinkedHashMap<>();
+    private final Map<Integer, CardView> highlightedCards = new LinkedHashMap<>();
     private final Map<Integer, PlayerView> selectablePlayers = new LinkedHashMap<>();
     private IGameController gameController;
     private boolean okEnabled;
@@ -84,8 +87,28 @@ public final class BridgeGuiGame extends NetworkGuiGame {
     private void observeState(String source, long sequenceNumber) {
         if (getGameView() != null) {
             printer.state(source, sequenceNumber, getGameView(), getLocalPlayers());
+            if (updateCombatSelectables()) {
+                listener.interactionObserved();
+            }
             listener.stateObserved();
         }
+    }
+
+    private boolean updateCombatSelectables() {
+        List<CardView> offered = new ArrayList<>();
+        if (getGameView().getPhase() == PhaseType.COMBAT_DECLARE_BLOCKERS
+                && getGameView().getCombat() != null) {
+            getGameView().getCombat().getAttackers().forEach(offered::add);
+            offered.sort(Comparator.comparingInt(CardView::getId));
+        }
+        List<Integer> offeredIds = offered.stream().map(CardView::getId).toList();
+        if (offeredIds.equals(List.copyOf(combatSelectableCards.keySet()))) {
+            return false;
+        }
+        combatSelectableCards.clear();
+        offered.forEach(card -> combatSelectableCards.put(card.getId(), card));
+        printer.combatSelectable(offered, getLocalPlayers());
+        return true;
     }
 
     @Override public void openView(TrackableCollection<PlayerView> myPlayers) { }
@@ -166,6 +189,30 @@ public final class BridgeGuiGame extends NetworkGuiGame {
     }
 
     @Override
+    public void setHighlighted(Iterable<GameEntityView> entities, boolean highlighted) {
+        List<GameEntityView> offered = new ArrayList<>();
+        if (entities != null) {
+            entities.forEach(offered::add);
+        }
+        super.setHighlighted(offered, highlighted);
+        boolean changed = false;
+        for (GameEntityView entity : offered) {
+            if (!(entity instanceof CardView card)) {
+                continue;
+            }
+            if (highlighted) {
+                changed |= highlightedCards.put(card.getId(), card) == null;
+            } else {
+                changed |= highlightedCards.remove(card.getId()) != null;
+            }
+        }
+        if (changed) {
+            printer.highlighted(List.copyOf(highlightedCards.values()), getLocalPlayers());
+            listener.interactionObserved();
+        }
+    }
+
+    @Override
     public SpellAbilityView getAbilityToPlay(CardView hostCard, List<SpellAbilityView> abilities,
             ITriggerEvent triggerEvent) {
         List<SpellAbilityView> offered = abilities == null ? Collections.emptyList() : List.copyOf(abilities);
@@ -208,6 +255,9 @@ public final class BridgeGuiGame extends NetworkGuiGame {
             CardView card = selectableCards.get(command.selectedId());
             if (card == null) {
                 card = weaklySelectableCards.get(command.selectedId());
+            }
+            if (card == null) {
+                card = combatSelectableCards.get(command.selectedId());
             }
             if (card == null) {
                 protocol.error("cardNotOffered", "cardId is not currently selectable", null);
