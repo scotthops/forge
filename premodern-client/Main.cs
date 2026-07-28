@@ -593,6 +593,11 @@ public partial class Main : Control
 			RenderCombatDamageQuery(query);
 			return;
 		}
+		if (query.Kind == "itemOrdering" && query.Items.Count > 0)
+		{
+			RenderItemOrderingQuery(query);
+			return;
+		}
 
 		abilityTitle.Text = $"Forge requires a choice: {Value(query.Kind)}\n"
 			+ $"{Value(query.HostCardName)}  requestId={Value(query.RequestId)}";
@@ -617,6 +622,115 @@ public partial class Main : Control
 			button.Pressed += () => SendReply(requestId, selectedId);
 			abilityChoices.AddChild(button);
 		}
+	}
+
+	private void RenderItemOrderingQuery(QueryMessage query)
+	{
+		string requestId = query.RequestId ?? string.Empty;
+		abilityTitle.Text = $"{Value(query.Title).ToUpperInvariant()}\n{Value(query.Prompt)}";
+
+		Dictionary<string, OrderingItem> itemsById = query.Items
+			.Where(item => !string.IsNullOrWhiteSpace(item.ItemId))
+			.GroupBy(item => item.ItemId!)
+			.ToDictionary(group => group.Key, group => group.First());
+		List<OrderingItem> ordered = query.OriginalOrder
+			.Where(itemsById.ContainsKey)
+			.Distinct(StringComparer.Ordinal)
+			.Select(itemId => itemsById[itemId])
+			.ToList();
+		if (ordered.Count != query.Items.Count || itemsById.Count != query.Items.Count)
+		{
+			ordered = query.Items.OrderBy(item => item.OriginalPosition).ToList();
+		}
+
+		Label guidance = new()
+		{
+			Text = query.Mandatory == true
+				? "Select a row, move it up or down, then confirm the complete order."
+				: "Select and arrange the Forge-offered items, then confirm.",
+			AutowrapMode = TextServer.AutowrapMode.WordSmart
+		};
+		abilityChoices.AddChild(guidance);
+
+		VBoxContainer rows = new();
+		abilityChoices.AddChild(rows);
+		int selectedIndex = ordered.Count > 0 ? 0 : -1;
+
+		HBoxContainer actions = new();
+		Button moveUp = new() { Text = "Move Up" };
+		Button moveDown = new() { Text = "Move Down" };
+		Button confirm = new() { Text = "Confirm Order" };
+		actions.AddChild(moveUp);
+		actions.AddChild(moveDown);
+		actions.AddChild(confirm);
+		abilityChoices.AddChild(actions);
+
+		CheckButton? remember = null;
+		if (query.RememberAllowed == true)
+		{
+			remember = new CheckButton { Text = "Remember this order for identical future triggers" };
+			abilityChoices.AddChild(remember);
+		}
+
+		void RefreshRows()
+		{
+			ClearChildren(rows);
+			for (int index = 0; index < ordered.Count; index++)
+			{
+				OrderingItem item = ordered[index];
+				string source = item.SourceCardId.HasValue
+					? $" — {Value(item.SourceCardName)} [card #{item.SourceCardId.Value}]"
+					: string.Empty;
+				Button row = new()
+				{
+					Text = $"{index + 1}. {Value(item.Description)}{source}  [{Value(item.ItemId)}]",
+					Alignment = HorizontalAlignment.Left,
+					TooltipText = "Opaque item IDs keep identical triggers separate."
+				};
+				int clickedIndex = index;
+				row.Pressed += () =>
+				{
+					selectedIndex = clickedIndex;
+					RefreshRows();
+				};
+				if (index == selectedIndex)
+				{
+					row.Text = $"▶ {row.Text}";
+				}
+				rows.AddChild(row);
+			}
+			moveUp.Disabled = selectedIndex <= 0;
+			moveDown.Disabled = selectedIndex < 0 || selectedIndex >= ordered.Count - 1;
+			confirm.Disabled = ordered.Count == 0
+				|| ordered.Any(item => string.IsNullOrWhiteSpace(item.ItemId));
+		}
+
+		moveUp.Pressed += () =>
+		{
+			if (selectedIndex <= 0)
+			{
+				return;
+			}
+			(ordered[selectedIndex - 1], ordered[selectedIndex]) =
+				(ordered[selectedIndex], ordered[selectedIndex - 1]);
+			selectedIndex--;
+			RefreshRows();
+		};
+		moveDown.Pressed += () =>
+		{
+			if (selectedIndex < 0 || selectedIndex >= ordered.Count - 1)
+			{
+				return;
+			}
+			(ordered[selectedIndex + 1], ordered[selectedIndex]) =
+				(ordered[selectedIndex], ordered[selectedIndex + 1]);
+			selectedIndex++;
+			RefreshRows();
+		};
+		confirm.Pressed += () => SendItemOrderingReply(requestId,
+			ordered.Select(item => item.ItemId ?? string.Empty).ToArray(),
+			remember?.ButtonPressed == true);
+		RefreshRows();
 	}
 
 	private void RenderCombatDamageQuery(QueryMessage query)
@@ -762,6 +876,30 @@ public partial class Main : Control
 			+ $"skip={skip} assignments={string.Join(",", assignments.Select(
 				assignment => $"{assignment.RecipientKey}:{assignment.Amount}"))}");
 		SendCommand(new CombatDamageReplyCommand(requestId, assignments, skip));
+	}
+
+	private void SendItemOrderingReply(string requestId,
+		IReadOnlyList<string> orderedItemIds, bool rememberDecision)
+	{
+		QueryMessage? query = clientState.PendingQuery;
+		if (query == null || query.RequestId != requestId || query.Kind != "itemOrdering")
+		{
+			actionStatus.Text = "That ordering query is no longer pending.";
+			return;
+		}
+		HashSet<string> offered = query.Items
+			.Select(item => item.ItemId ?? string.Empty)
+			.ToHashSet(StringComparer.Ordinal);
+		if (orderedItemIds.Count != offered.Count
+			|| orderedItemIds.Distinct(StringComparer.Ordinal).Count() != offered.Count
+			|| orderedItemIds.Any(itemId => !offered.Contains(itemId)))
+		{
+			actionStatus.Text = "The order must contain every offered item exactly once.";
+			return;
+		}
+		GD.Print($"G3 ITEM_ORDER_REPLY requestId={requestId} "
+			+ $"order={string.Join(",", orderedItemIds)} remember={rememberDecision}");
+		SendCommand(new ItemOrderingReplyCommand(requestId, orderedItemIds, rememberDecision));
 	}
 
 	private void OnPassPriority()

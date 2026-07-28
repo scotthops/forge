@@ -8,11 +8,15 @@ import forge.game.card.CardView;
 import forge.game.combat.CombatDamageAssignment;
 import forge.game.player.PlayerView;
 import forge.game.spellability.SpellAbilityView;
+import forge.gui.interfaces.IGuiGame;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -23,7 +27,7 @@ import java.util.function.Consumer;
 
 final class BridgeProtocol implements AutoCloseable {
     static final int SCHEMA_VERSION = 1;
-    private static final long QUERY_TIMEOUT_SECONDS = 30;
+    private static final long DEFAULT_QUERY_TIMEOUT_MILLIS = TimeUnit.SECONDS.toMillis(30);
 
     enum CommandType {
         SELECT_CARD,
@@ -39,14 +43,22 @@ final class BridgeProtocol implements AutoCloseable {
     private final Gson gson = new Gson();
     private final AtomicLong requestIds = new AtomicLong();
     private final AtomicLong interactionSequences = new AtomicLong();
+    private final long queryTimeoutMillis;
     private final Map<String, PendingChoiceQuery<?>> pendingChoiceQueries = new ConcurrentHashMap<>();
     private final Map<String, PendingCombatDamageQuery> pendingCombatDamageQueries =
+            new ConcurrentHashMap<>();
+    private final Map<String, PendingItemOrderQuery<?>> pendingItemOrderQueries =
             new ConcurrentHashMap<>();
     private Consumer<Command> actionHandler;
 
     BridgeProtocol(JsonLineTransport transport, BridgeGuiBase guiBase) {
+        this(transport, guiBase, DEFAULT_QUERY_TIMEOUT_MILLIS);
+    }
+
+    BridgeProtocol(JsonLineTransport transport, BridgeGuiBase guiBase, long queryTimeoutMillis) {
         this.transport = transport;
         this.guiBase = guiBase;
+        this.queryTimeoutMillis = queryTimeoutMillis;
     }
 
     void start(Consumer<Command> handler, Runnable eofHandler) {
@@ -140,7 +152,7 @@ final class BridgeProtocol implements AutoCloseable {
         send(query);
 
         try {
-            return pending.reply().get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            return pending.reply().get(queryTimeoutMillis, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             error("queryTimeout", "No reply received for combat damage assignment", requestId);
         } catch (InterruptedException e) {
@@ -156,6 +168,64 @@ final class BridgeProtocol implements AutoCloseable {
         return null;
     }
 
+    <T> IGuiGame.OrderResult<T> queryItemOrder(String title, String prompt,
+            List<T> originalOrder, boolean mandatory, boolean showRememberCheckbox) {
+        List<T> fallback = List.copyOf(originalOrder);
+        if (fallback.size() < 2) {
+            return new IGuiGame.OrderResult<>(fallback, false);
+        }
+
+        String requestId = "q-" + requestIds.incrementAndGet();
+        Map<String, T> itemsById = new LinkedHashMap<>();
+        List<OrderingItem> items = new ArrayList<>(fallback.size());
+        List<String> originalItemIds = new ArrayList<>(fallback.size());
+        for (int index = 0; index < fallback.size(); index++) {
+            T item = fallback.get(index);
+            String itemId = "item-" + (index + 1);
+            itemsById.put(itemId, item);
+            originalItemIds.add(itemId);
+
+            CardView sourceCard = null;
+            if (item instanceof SpellAbilityView ability) {
+                sourceCard = ability.getHostCard();
+            } else if (item instanceof CardView card) {
+                sourceCard = card;
+            }
+            items.add(new OrderingItem(itemId, clean(String.valueOf(item)),
+                    sourceCard == null ? null : sourceCard.getId(),
+                    sourceCard == null ? null : clean(sourceCard.getName()), index));
+        }
+
+        ItemOrderingQueryMessage query = new ItemOrderingQueryMessage(
+                "query", requestId, "itemOrdering", clean(title), clean(prompt),
+                mandatory, showRememberCheckbox, items, originalItemIds);
+        PendingItemOrderQuery<T> pending = new PendingItemOrderQuery<>(
+                itemsById, query, new CompletableFuture<>());
+        pendingItemOrderQueries.put(requestId, pending);
+        send(query);
+
+        try {
+            return pending.reply().get(queryTimeoutMillis, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            orderingFallback(requestId, "timed out");
+            error("queryTimeout", "No reply received for item ordering; using original order",
+                    requestId);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            orderingFallback(requestId, "was interrupted");
+            error("queryInterrupted", "Item ordering was interrupted; using original order",
+                    requestId);
+        } catch (ExecutionException e) {
+            String cause = clean(e.getCause() == null ? e.getMessage() : e.getCause().getMessage());
+            orderingFallback(requestId, "was cancelled: " + cause);
+            error("queryCancelled", "Item ordering was cancelled; using original order",
+                    requestId);
+        } finally {
+            pendingItemOrderQueries.remove(requestId, pending);
+        }
+        return new IGuiGame.OrderResult<>(fallback, false);
+    }
+
     private <T> T queryChoice(String kind, CardView hostCard, Map<Integer, T> choices,
             List<AbilityChoice> outputChoices, String description) {
         String requestId = "q-" + requestIds.incrementAndGet();
@@ -166,7 +236,7 @@ final class BridgeProtocol implements AutoCloseable {
                 hostCard == null ? null : clean(hostCard.getName()), outputChoices));
 
         try {
-            return pending.reply().get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            return pending.reply().get(queryTimeoutMillis, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             error("queryTimeout", "No reply received for " + description, requestId);
         } catch (InterruptedException e) {
@@ -259,8 +329,13 @@ final class BridgeProtocol implements AutoCloseable {
         }
         PendingChoiceQuery<?> pendingChoice = pendingChoiceQueries.get(requestId);
         PendingCombatDamageQuery pendingDamage = pendingCombatDamageQueries.get(requestId);
-        if (pendingChoice == null && pendingDamage == null) {
+        PendingItemOrderQuery<?> pendingOrder = pendingItemOrderQueries.get(requestId);
+        if (pendingChoice == null && pendingDamage == null && pendingOrder == null) {
             error("staleRequestId", "No pending query has this requestId", requestId);
+            return;
+        }
+        if (pendingOrder != null) {
+            handleItemOrderReply(input, requestId, pendingOrder);
             return;
         }
         if (pendingDamage != null) {
@@ -274,6 +349,48 @@ final class BridgeProtocol implements AutoCloseable {
             return;
         }
         completePending(pendingChoice, selected);
+    }
+
+    private void handleItemOrderReply(JsonObject input, String requestId,
+            PendingItemOrderQuery<?> pending) {
+        JsonElement orderElement = input.get("orderedItemIds");
+        if (orderElement == null || !orderElement.isJsonArray()) {
+            rejectItemOrderReply(requestId, pending,
+                    "Reply must contain an orderedItemIds array");
+            return;
+        }
+
+        List<String> orderedIds = new ArrayList<>();
+        Set<String> distinctIds = new HashSet<>();
+        for (JsonElement element : orderElement.getAsJsonArray()) {
+            if (!element.isJsonPrimitive() || !element.getAsJsonPrimitive().isString()) {
+                rejectItemOrderReply(requestId, pending,
+                        "Every ordered item ID must be a string");
+                return;
+            }
+            String itemId = element.getAsString();
+            if (!pending.itemsById().containsKey(itemId) || !distinctIds.add(itemId)) {
+                rejectItemOrderReply(requestId, pending,
+                        "Ordered item IDs must contain every offered ID exactly once");
+                return;
+            }
+            orderedIds.add(itemId);
+        }
+        if (orderedIds.size() != pending.itemsById().size()) {
+            rejectItemOrderReply(requestId, pending,
+                    "Ordered item IDs must contain every offered ID exactly once");
+            return;
+        }
+
+        Boolean rememberDecision = booleanField(input, "rememberDecision");
+        completePendingOrder(pending, orderedIds,
+                pending.query().rememberAllowed() && Boolean.TRUE.equals(rememberDecision));
+    }
+
+    private void rejectItemOrderReply(String requestId, PendingItemOrderQuery<?> pending,
+            String message) {
+        error("invalidItemOrder", message, requestId);
+        send(pending.query());
     }
 
     private void handleCombatDamageReply(JsonObject input, String requestId,
@@ -330,6 +447,17 @@ final class BridgeProtocol implements AutoCloseable {
     @SuppressWarnings("unchecked")
     private static <T> void completePending(PendingChoiceQuery<T> pending, Object selected) {
         pending.reply().complete((T) selected);
+    }
+
+    private static <T> void completePendingOrder(PendingItemOrderQuery<T> pending,
+            List<String> orderedIds, boolean rememberDecision) {
+        List<T> ordered = orderedIds.stream().map(pending.itemsById()::get).toList();
+        pending.reply().complete(new IGuiGame.OrderResult<>(ordered, rememberDecision));
+    }
+
+    private static void orderingFallback(String requestId, String reason) {
+        System.err.println("[forge-bridge] Item ordering query " + requestId + " " + reason
+                + "; using the original Forge-provided order.");
     }
 
     private static String stringField(JsonObject input, String name) {
@@ -391,13 +519,21 @@ final class BridgeProtocol implements AutoCloseable {
                 pending.reply().completeExceptionally(
                         new IllegalStateException("Bridge protocol closed")));
         pendingCombatDamageQueries.clear();
+        pendingItemOrderQueries.forEach((requestId, pending) ->
+                pending.reply().completeExceptionally(
+                        new IllegalStateException("Bridge protocol closed")));
+        pendingItemOrderQueries.clear();
     }
 
     private record PendingChoiceQuery<T>(Map<Integer, T> choices, CompletableFuture<T> reply) { }
 
     private record PendingCombatDamageQuery(CombatDamageAssignment assignment,
-                                            CombatDamageQueryMessage query,
-                                            CompletableFuture<Map<CardView, Integer>> reply) { }
+                                             CombatDamageQueryMessage query,
+                                             CompletableFuture<Map<CardView, Integer>> reply) { }
+
+    private record PendingItemOrderQuery<T>(Map<String, T> itemsById,
+                                            ItemOrderingQueryMessage query,
+                                            CompletableFuture<IGuiGame.OrderResult<T>> reply) { }
 
     private record LifecycleMessage(String type, String event, String detail) { }
 
@@ -423,10 +559,18 @@ final class BridgeProtocol implements AutoCloseable {
                                            boolean freeAssignment, boolean maySkip) { }
 
     private record CombatDamageQueryMessage(String type, String requestId, String kind,
-                                            Integer hostCardId, String hostCardName,
-                                            int totalDamage,
-                                            List<CombatDamageRecipient> recipients,
-                                            CombatDamageConstraints constraints) { }
+                                             Integer hostCardId, String hostCardName,
+                                             int totalDamage,
+                                             List<CombatDamageRecipient> recipients,
+                                             CombatDamageConstraints constraints) { }
+
+    private record OrderingItem(String itemId, String description, Integer sourceCardId,
+                                String sourceCardName, int originalPosition) { }
+
+    private record ItemOrderingQueryMessage(String type, String requestId, String kind,
+                                            String title, String prompt, boolean mandatory,
+                                            boolean rememberAllowed, List<OrderingItem> items,
+                                            List<String> originalOrder) { }
 
     private record UnsupportedQueryMessage(String type, String requestId, String kind,
                                            String offered, boolean replySupported) { }

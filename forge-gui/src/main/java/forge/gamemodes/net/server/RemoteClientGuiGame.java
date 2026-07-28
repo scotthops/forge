@@ -34,6 +34,7 @@ import forge.trackable.Tracker;
 import forge.util.FSerializableFunction;
 import forge.util.ITriggerEvent;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -462,7 +463,25 @@ public class RemoteClientGuiGame extends NetworkGuiGame implements IHasForgeLog 
 
     @Override
     public <T> IGuiGame.OrderResult<T> order(final String title, final String top, final int remainingObjectsMin, final int remainingObjectsMax, final List<T> sourceChoices, final List<T> destChoices, final CardView referenceCard, final boolean sideboardingMode, final boolean showRememberCheckbox) {
-        return syncAndSendAndWait(ProtocolMethod.order, title, top, remainingObjectsMin, remainingObjectsMax, sourceChoices, destChoices, referenceCard, sideboardingMode, showRememberCheckbox);
+        final IGuiGame.OrderResult<T> result = syncAndSendAndWait(ProtocolMethod.order,
+                title, top, remainingObjectsMin, remainingObjectsMax, sourceChoices, destChoices,
+                referenceCard, sideboardingMode, showRememberCheckbox);
+        if (result != null) {
+            return result;
+        }
+
+        final List<T> fallback = new ArrayList<>();
+        if (destChoices != null) {
+            fallback.addAll(destChoices);
+        }
+        // A total-order callback requires every source item. For selection-plus-order dialogs,
+        // preserving only the current destination avoids silently selecting optional items.
+        if (remainingObjectsMin == 0 && remainingObjectsMax == 0 && sourceChoices != null) {
+            fallback.addAll(sourceChoices);
+        }
+        netLog.error("Remote order callback returned no result for {}; using the original "
+                + "Forge-provided order", client.getUsername());
+        return new IGuiGame.OrderResult<>(fallback, false);
     }
 
     @Override

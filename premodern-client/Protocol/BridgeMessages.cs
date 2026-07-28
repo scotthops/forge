@@ -89,6 +89,12 @@ public sealed record QueryMessage(
     int SchemaVersion,
     string? RequestId,
     string? Kind,
+    string? Title,
+    string? Prompt,
+    bool? Mandatory,
+    bool? RememberAllowed,
+    IReadOnlyList<OrderingItem> Items,
+    IReadOnlyList<string> OriginalOrder,
     int? HostCardId,
     string? HostCardName,
     IReadOnlyList<QueryChoice> Choices,
@@ -100,6 +106,13 @@ public sealed record QueryMessage(
     : BridgeMessage(SchemaVersion, "query");
 
 public sealed record QueryChoice(int Id, string? Description, bool CanPlay);
+
+public sealed record OrderingItem(
+    string? ItemId,
+    string? Description,
+    int? SourceCardId,
+    string? SourceCardName,
+    int OriginalPosition);
 
 public sealed record CombatDamageRecipient(
     string? Key,

@@ -41,6 +41,12 @@ public sealed record CombatDamageReplyCommand(
     bool Skip = false)
     : BridgeCommand("reply");
 
+public sealed record ItemOrderingReplyCommand(
+    string RequestId,
+    IReadOnlyList<string> OrderedItemIds,
+    bool RememberDecision = false)
+    : BridgeCommand("reply");
+
 public static class BridgeCommandSerializer
 {
     public static string Serialize(BridgeCommand command)
@@ -97,6 +103,16 @@ public static class BridgeCommandSerializer
             },
             CombatDamageReplyCommand => throw new ArgumentException(
                 "A combat damage reply command requires a requestId.", nameof(command)),
+            ItemOrderingReplyCommand reply when !string.IsNullOrWhiteSpace(reply.RequestId) => new
+            {
+                schemaVersion = BridgeSchema.SupportedVersion,
+                type = reply.Type,
+                requestId = reply.RequestId,
+                orderedItemIds = reply.OrderedItemIds,
+                rememberDecision = reply.RememberDecision
+            },
+            ItemOrderingReplyCommand => throw new ArgumentException(
+                "An item ordering reply command requires a requestId.", nameof(command)),
             _ => throw new ArgumentException($"Unsupported bridge command type: {command.GetType().Name}",
                 nameof(command))
         };

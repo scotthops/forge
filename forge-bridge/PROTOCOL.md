@@ -73,9 +73,30 @@ produces `STALE_INTERACTION`; Forge is not called.
 
 `requestId` belongs to one synchronous `query`. A `reply` must echo it. Choice queries select only
 an ID offered by that query. Combat-damage queries instead return one integer amount for every
-offered recipient. Replayed Forge callbacks receive new request IDs and must be answered
-independently. `requestId` is authoritative for synchronous replies; `interactionSequence` does not
-replace it.
+offered recipient. Item-ordering queries return a complete permutation of the opaque IDs offered by
+that query. Replayed Forge callbacks receive new request IDs and must be answered independently.
+`requestId` is authoritative for synchronous replies; `interactionSequence` does not replace it.
+
+### Item Ordering
+
+`itemOrdering` represents Forge total-order callbacks, including simultaneous spell abilities and
+triggers, without exposing `SpellAbility` objects to the client. The query contains Forge's `title`
+and `prompt`, whether the ordering is mandatory, whether Forge offered a remember-order option,
+one player-visible item description per occurrence, and `originalOrder`.
+
+Every item has a request-local opaque `itemId`. IDs remain attached to their individual rows while
+the player moves them, so identical descriptions are still separate choices. When Forge supplied a
+source card, `sourceCardId` and `sourceCardName` provide a visible instance suffix; clients must
+still use `itemId`, rather than names or card IDs, as ordering identity.
+
+A reply must contain every offered ID exactly once in `orderedItemIds`. Missing, duplicate,
+non-string, and unknown IDs produce `invalidItemOrder`; the bridge reissues the still-pending query
+with the same `requestId`. `rememberDecision` is honored only as the value returned to Forge.
+
+The normal timeout is 30 seconds. Timeout, bridge closure, interruption, or a null network RPC
+result never produces a null `OrderResult`: the exact original Forge-provided order is returned and
+the fallback is logged to stderr. Partial selection-plus-order dual-list dialogs and sideboarding
+are not represented by this total-order query and remain unsupported.
 
 ### Combat Damage Assignment
 
@@ -105,11 +126,18 @@ Synchronous query and reply:
 {"schemaVersion":1,"type":"reply","requestId":"q-7","selectedId":456}
 ```
 
+Simultaneous-trigger ordering and reply:
+
+```json
+{"schemaVersion":1,"type":"query","requestId":"q-8","kind":"itemOrdering","title":"Select order for simultaneous abilities","prompt":"Resolve first","mandatory":true,"rememberAllowed":true,"items":[{"itemId":"item-1","description":"Jackal Pup — damage trigger","sourceCardId":101,"sourceCardName":"Jackal Pup","originalPosition":0},{"itemId":"item-2","description":"Jackal Pup — damage trigger","sourceCardId":102,"sourceCardName":"Jackal Pup","originalPosition":1}],"originalOrder":["item-1","item-2"]}
+{"schemaVersion":1,"type":"reply","requestId":"q-8","orderedItemIds":["item-2","item-1"],"rememberDecision":false}
+```
+
 Trample assignment and reply:
 
 ```json
-{"schemaVersion":1,"type":"query","requestId":"q-8","kind":"combatDamageAssignment","hostCardId":101,"hostCardName":"Ball Lightning","totalDamage":6,"recipients":[{"key":"blocker:0","entityType":"card","entityId":202,"name":"Goblin Patrol","role":"blocker","order":0,"minimumDamage":1},{"key":"defender","entityType":"player","entityId":303,"name":"Opponent","role":"defender","order":1,"minimumDamage":0}],"constraints":{"orderedAssignment":true,"defenderRequiresLethalBlockers":true,"freeAssignment":false,"maySkip":false}}
-{"schemaVersion":1,"type":"reply","requestId":"q-8","assignments":[{"recipientKey":"blocker:0","amount":1},{"recipientKey":"defender","amount":5}],"skip":false}
+{"schemaVersion":1,"type":"query","requestId":"q-9","kind":"combatDamageAssignment","hostCardId":101,"hostCardName":"Ball Lightning","totalDamage":6,"recipients":[{"key":"blocker:0","entityType":"card","entityId":202,"name":"Goblin Patrol","role":"blocker","order":0,"minimumDamage":1},{"key":"defender","entityType":"player","entityId":303,"name":"Opponent","role":"defender","order":1,"minimumDamage":0}],"constraints":{"orderedAssignment":true,"defenderRequiresLethalBlockers":true,"freeAssignment":false,"maySkip":false}}
+{"schemaVersion":1,"type":"reply","requestId":"q-9","assignments":[{"recipientKey":"blocker:0","amount":1},{"recipientKey":"defender","amount":5}],"skip":false}
 ```
 
 Rejected stale action:

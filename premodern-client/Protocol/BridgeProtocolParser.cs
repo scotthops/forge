@@ -148,6 +148,17 @@ public static class BridgeProtocolParser
 
     private static QueryMessage ParseQuery(int schemaVersion, JsonElement root)
     {
+        List<OrderingItem> items = [];
+        foreach (JsonElement item in Array(root, "items"))
+        {
+            items.Add(new OrderingItem(
+                String(item, "itemId"),
+                String(item, "description"),
+                NullableInt32(item, "sourceCardId"),
+                String(item, "sourceCardName"),
+                Int32(item, "originalPosition")));
+        }
+
         List<QueryChoice> choices = [];
         foreach (JsonElement choice in Array(root, "choices"))
         {
@@ -184,6 +195,12 @@ public static class BridgeProtocolParser
             schemaVersion,
             String(root, "requestId"),
             String(root, "kind"),
+            String(root, "title"),
+            String(root, "prompt"),
+            NullableBoolean(root, "mandatory"),
+            NullableBoolean(root, "rememberAllowed"),
+            items,
+            ParseStrings(root, "originalOrder"),
             NullableInt32(root, "hostCardId"),
             String(root, "hostCardName"),
             choices,
@@ -239,6 +256,19 @@ public static class BridgeProtocolParser
             }
         }
         return ids;
+    }
+
+    private static IReadOnlyList<string> ParseStrings(JsonElement parent, string property)
+    {
+        List<string> values = [];
+        foreach (JsonElement element in Array(parent, property))
+        {
+            if (element.ValueKind == JsonValueKind.String && element.GetString() is string value)
+            {
+                values.Add(value);
+            }
+        }
+        return values;
     }
 
     private static IEnumerable<JsonElement> Array(JsonElement parent, string property)

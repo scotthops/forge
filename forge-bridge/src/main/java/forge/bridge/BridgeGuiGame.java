@@ -393,7 +393,26 @@ public final class BridgeGuiGame extends NetworkGuiGame {
     public <T> IGuiGame.OrderResult<T> order(String title, String top, int remainingObjectsMin,
             int remainingObjectsMax, List<T> sourceChoices, List<T> destChoices,
             CardView referenceCard, boolean sideboardingMode, boolean showRememberCheckbox) {
-        throw unsupported("order", sourceChoices);
+        List<T> source = sourceChoices == null ? Collections.emptyList() : sourceChoices;
+        List<T> destination = destChoices == null ? Collections.emptyList() : destChoices;
+
+        // A total ordering is the generic shape used by simultaneous abilities, damage order,
+        // replacement effects, and ordered zone moves. Dual-list callbacks that intentionally
+        // leave some source items unchosen are a different interaction and remain unsupported.
+        if (sideboardingMode || remainingObjectsMin != 0 || remainingObjectsMax != 0) {
+            protocol.unsupportedQuery("partialItemOrdering", source);
+            listener.interactionObserved();
+            listener.unsupportedRequiredQuery();
+            System.err.println("[forge-bridge] Partial/sideboard ordering is not supported; "
+                    + "preserving Forge's current destination order.");
+            return new IGuiGame.OrderResult<>(List.copyOf(destination), false);
+        }
+
+        List<T> originalOrder = new ArrayList<>(destination.size() + source.size());
+        originalOrder.addAll(destination);
+        originalOrder.addAll(source);
+        listener.interactionObserved();
+        return protocol.queryItemOrder(title, top, originalOrder, true, showRememberCheckbox);
     }
 
     @Override public List<PaperCard> sideboard(CardPool sideboard, CardPool main, String message) { throw unsupported("sideboard", sideboard); }

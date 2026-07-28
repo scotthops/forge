@@ -1,6 +1,6 @@
 # Premodern Client — Project Status
 
-> **Current as of:** 2026-07-23  
+> **Current as of:** 2026-07-28
 > **Git branch:** `spike/godot-bridge`  
 > **Commit inspected:** `61f4ad11dd9da65cb1c3632f385e976c331a716b` (`initial trample fix`)  
 > **Working tree at inspection start:** no tracked modifications; the pre-existing `.codex/` directory was untracked, so the tree was not clean.
@@ -89,6 +89,7 @@ Important custom entry points and files:
 - `forge.bridge.BridgeProtocol` / `BridgePrinter` — schema, validation, correlation, projections, and JSON messages.
 - `forge-bridge/PROTOCOL.md` — current protocol reference.
 - `forge.net.GodotSlighMirrorHostMain` — test-source Sligh-vs-AI host for manual Godot play.
+- `forge.net.GodotJackalPupCombatHostMain` — test-source 22 Mountain/38 Jackal Pup mirror host for repeated attacker/blocker UX testing.
 - `forge.net.GodotG3HostMain` — deterministic Mountain/Lightning Bolt/Llanowar Elves regression host.
 - `forge.net.SlighMirrorDeck` — exact first-deck recipe.
 - `premodern-client/Main.cs` / `Main.tscn` — client startup, rendering, input, and main layout.
@@ -143,6 +144,8 @@ Bridge stdout is reserved for JSONL. Forge diagnostics are redirected to stderr 
 - [x] Prompt, buttons, strong/weak card selectables, and player selectables.
 - [x] Strict `interactionSequence` stale-action protection.
 - [x] Correlated ability-choice queries using `requestId`.
+- [x] Correlated total-item ordering queries for simultaneous abilities/triggers and other complete
+  Forge orderings, with exact-permutation validation and original-order fallback.
 - [x] Structured combat-damage assignment with ordered recipients, lethal minima, player/card defenders, validation, retry, and optional skip.
 - [x] Authoritative combat projection with attacking card IDs, planned blocker relationships, combat-navigation attacker IDs, and Forge-highlighted selected card IDs.
 - [x] Action-accepted acknowledgements and lifecycle/controller messages.
@@ -155,6 +158,8 @@ Bridge stdout is reserved for JSONL. Forge diagnostics are redirected to stderr 
 - [x] No optimistic game-state mutation.
 - [x] Card and player selection, Forge-labelled OK/Cancel controls, and pass priority.
 - [x] Ability-choice panel and correlated replies.
+- [x] Item-ordering panel with individually identified rows, move-up/down controls, complete-order
+  confirmation, and Forge's remember-order option.
 - [x] Combat-damage editor with client-side guidance plus authoritative bridge validation.
 - [x] Attacker-first blocker declaration UI matching Forge's real input flow, with distinct attacker/current-attacker/legal-blocker/blocking states and persistent authoritative relationship text.
 - [x] Opening-hand Keep/Mulligan controls and London-mulligan card selection/Auto button path.
@@ -166,6 +171,8 @@ Bridge stdout is reserved for JSONL. Forge diagnostics are redirected to stderr 
 - [x] Land play through the remote controller.
 - [x] Targeted spell selection, ability selection, card target, player target, mana-source selection, stack observation, pass priority, and authoritative resolution are represented in code/tests.
 - [x] Single unambiguous triggered ability handling, including the Jackal Pup regression.
+- [x] Multiple simultaneous triggered abilities can be ordered by a remote human without exposing
+  Forge `SpellAbility` objects or collapsing identical descriptions.
 - [x] Attacker/blocker declaration with authoritative relationship presentation and structured combat-damage assignment.
 - [ ] All required callbacks encountered by a complete Sligh game.
 - [ ] Verified networked Ball Lightning trample playthrough.
@@ -309,6 +316,16 @@ java -cp "..\forge-gui-desktop\target\test-classes;..\forge-gui-desktop\target\f
 Pop-Location
 ```
 
+### Start the Jackal Pup combat UX host
+
+Use this development-only host to quickly build creature-heavy boards for repeated attacker/blocker testing:
+
+```powershell
+Push-Location forge-gui
+java -cp "..\forge-gui-desktop\target\test-classes;..\forge-gui-desktop\target\forge-gui-desktop-2.0.14-SNAPSHOT-jar-with-dependencies.jar" forge.net.GodotJackalPupCombatHostMain 36743
+Pop-Location
+```
+
 ### Run Godot
 
 Open `premodern-client/project.godot` in the Godot .NET editor and run the project. The default `Main` properties are:
@@ -383,7 +400,7 @@ Such artifacts could later support regression tests, replay/debug tools, and dif
 ### Not Yet Implemented / Deferred Within the Milestone
 
 - A complete Sligh playthrough through lethal has not been demonstrated or automated.
-- The bridge still reports `unsupportedQuery` and stops for required callbacks including generic amount assignment, confirm/option/input dialogs, general `getChoices`, ordering, sideboarding, entity-choice helpers, and card-list manipulation. A real Sligh playthrough must determine which need generic implementations now.
+- The bridge still reports `unsupportedQuery` and stops for required callbacks including generic amount assignment, confirm/option/input dialogs, general `getChoices`, partial selection-plus-order dialogs, sideboarding, entity-choice helpers, and card-list manipulation. Total ordering is supported; Forge dual-list callbacks that intentionally leave source items unchosen are not.
 - `BridgeGuiGame` leaves many purely visual Forge GUI callbacks as no-ops. Authoritative full/delta state covers the implemented zones, but combat presentation is especially thin.
 - State projection currently includes visible hand, battlefield, graveyard, stack, and attacker/planned-blocker relationships. It does not provide combat defenders, exile/library views, mana pool, game result screen, or every temporary/revealed zone.
 - The stack UI is one clipped text line, shows card targets only, and is not interactive.
@@ -400,13 +417,20 @@ The deliberately limited deck/card pool, lack of a deckbuilder, and lack of broa
 Important custom coverage:
 
 - `AbilitySelectionBridgeTest` — single unambiguous trigger behavior and correlated multi-choice ability replies.
+- `ItemOrderingBridgeTest` — total-order query shape, identical descriptions with distinct opaque
+  IDs/source instances, returned permutations, malformed reply rejection, and timeout/closure
+  original-order fallback.
+- `RemoteClientOrderingFallbackTest` — host-side null network result becomes a non-null
+  original-order `OrderResult`.
 - `CombatDamageBridgeTest` — Ball Lightning-style trample assignment, one/multiple blockers, ordered lethal constraints, invalid-reply retry, unblocked/single-recipient fast paths, and zero damage.
 - `CombatStateBridgeTest` — authoritative combat projection for no blocker, one blocker, multiple blockers, and multiple attackers using Forge planned-blocker state.
 - `StandaloneBridgeIntegrationTest` — a real bridge process connects, receives a normal network controller, emits versioned controller/state/interaction messages, and hides the opponent hand.
 - `SlighMirrorH1Test` — exact deck recipe for both players, standalone bridge opening hand/mulligan controls, and a shuffled remote-human game reaching an ordinary turn.
 - `NetworkPlayIntegrationTest` / `NetworkInteractionProbe` — network state/delta observation plus scripted land and targeted-spell controller paths.
 - `BlockingCombatRegressionTest` — no-blocker, declined-block, legal-block, and blocked Ball Lightning engine behavior.
-- `JackalPupTriggerRegressionTest` — the mandatory damage trigger resolves through the single-ability behavior.
+- `JackalPupTriggerRegressionTest` — the mandatory damage trigger resolves through the
+  single-ability behavior, and three simultaneous Pup triggers reach and honor the human ordering
+  callback without a null result.
 - `LondonMulliganTest` — tuck timing and post-mulligan selection behavior.
 - `FServerManagerShutdownTest` — repeated stop/restart and clean JVM shutdown-hook behavior.
 
@@ -414,9 +438,16 @@ Verification performed for this status snapshot:
 
 - Maven package command: **passed**.
 - Godot C# `dotnet build`: **passed**, 0 warnings and 0 errors.
-- Bridge unit tests: **12/12 passed** (2 ability + 6 combat-damage + 4 combat-state).
+- Bridge unit tests: **16/16 passed** (2 ability + 6 combat-damage + 4 combat-state + 4 item-ordering).
 - Selected desktop tests other than JSON: **11/11 invocations passed** (shutdown 2, Sligh 3, standalone bridge 1, blocking 4, Jackal Pup 1).
 - `JsonBridgeIntegrationTest`: **0/3 passed** in both combined and isolated reruns; see section 12.
+
+Additional ordering verification on 2026-07-28:
+
+- `ItemOrderingBridgeTest`: **4/4 passed**.
+- `RemoteClientOrderingFallbackTest`: **1/1 passed**.
+- `JackalPupTriggerRegressionTest`: **2/2 passed**.
+- Godot C# `dotnet build`: **passed**, 0 warnings and 0 errors.
 
 Major coverage gaps are a real Godot-driven full match, two humans, end-to-end networked trample, unsupported callback discovery/coverage, and automated C# protocol/UI tests.
 
