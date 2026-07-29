@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://CardControl.cs" id="1_card_control"]
 
@@ -91,6 +91,22 @@ corner_radius_bottom_left = 4
 content_margin_left = 4.0
 content_margin_top = 2.0
 content_margin_right = 4.0
+content_margin_bottom = 2.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_instance_badge"]
+bg_color = Color(0.08, 0.1, 0.13, 0.96)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.92, 0.94, 0.98, 0.9)
+corner_radius_top_left = 7
+corner_radius_top_right = 7
+corner_radius_bottom_right = 7
+corner_radius_bottom_left = 7
+content_margin_left = 6.0
+content_margin_top = 2.0
+content_margin_right = 6.0
 content_margin_bottom = 2.0
 
 [node name="CardControl" type="Control"]
@@ -212,6 +228,30 @@ theme_override_colors/font_color = Color(1, 0.94, 0.88, 1)
 theme_override_font_sizes/font_size = 10
 text = "ATTACKING"
 horizontal_alignment = 1
+
+[node name="InstanceBadge" type="PanelContainer" parent="VisualRoot/StateOverlay"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -31.0
+offset_top = 5.0
+offset_right = -5.0
+offset_bottom = 29.0
+grow_horizontal = 0
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_instance_badge")
+
+[node name="InstanceLabel" type="Label" parent="VisualRoot/StateOverlay/InstanceBadge"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.96, 0.97, 1, 1)
+theme_override_font_sizes/font_size = 12
+text = "A"
+horizontal_alignment = 1
+vertical_alignment = 1
 
 [node name="RelationshipBadge" type="PanelContainer" parent="VisualRoot/StateOverlay"]
 unique_name_in_owner = true

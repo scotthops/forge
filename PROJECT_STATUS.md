@@ -190,6 +190,8 @@ Bridge stdout is reserved for JSONL. Forge diagnostics are redirected to stderr 
 - [x] Image-backed reusable `CardControl` for hand and battlefield.
 - [x] Green actionable frame and 90-degree tapped rendering.
 - [x] Separate orange attacking, gold selected, and blue blocking states with blocker relationship badges.
+- [x] Stable player-facing instance badges for duplicate visible battlefield names, reused by
+  card-local and current-action combat relationship text.
 - [x] Right-click preview and missing-image/name fallback.
 
 ### Testing
@@ -200,7 +202,8 @@ Bridge stdout is reserved for JSONL. Forge diagnostics are redirected to stderr 
 - [x] Sligh deck/opening/mulligan/ordinary-turn tests.
 - [x] Network land and targeted-spell harnesses in source.
 - [x] Blocking/Ball Lightning, Jackal Pup, London mulligan, and shutdown regressions.
-- [ ] Godot UI/parser automated tests.
+- [x] Godot presentation-identity helper tests.
+- [ ] Godot parser and scene automated tests.
 - [ ] Passing current external JSONL targeted-spell integration test; see sections 12 and 13.
 
 ## 7. Current Sligh Scope
@@ -245,6 +248,13 @@ Forge still loads and knows its much larger card database (the current test init
 `Main.cs` rebuilds the zone controls from each authoritative state message. Empty battlefield rows remain present, avoiding large layout jumps. Forge's dynamic `isLand` value selects the battlefield row.
 
 The same `CardControl` is used for visible hand and battlefield cards. Left-click requests the current Forge action only when the card ID is offered. Right-click opens the local preview. A green frame marks ordinary actionable cards; orange marks attackers, gold marks Forge's current selected attacker, and blue plus relationship text marks blocking assignments. Tapped battlefield cards rotate 90 degrees. Graveyards currently use compact text buttons with right-click preview rather than `CardControl`.
+
+When two or more visible battlefield cards controlled by the same player have the same name, each
+gets a concise instance badge. Local duplicates use stable numeric labels (`1`, `2`, ...), while
+opponent duplicates use stable alphabetic labels (`A`, `B`, ...). The mapping is backed by Forge
+card IDs but does not expose those IDs as the primary card label. Assignments, `BLOCKING`,
+`BLOCKED BY`, and the current-attacker prompt use the same labels and explicit `Your`/`Opponent`
+wording. Unique and hidden cards receive no badge.
 
 Player selection uses the local/opponent headers. The stack is currently a single text line showing source and card targets; it is not an interactive card stack and does not display player targets. Combat uses card-local markers and relationship text rather than a dedicated combat layout.
 
@@ -433,6 +443,8 @@ Important custom coverage:
   callback without a null result.
 - `LondonMulliganTest` — tuck timing and post-mulligan selection behavior.
 - `FServerManagerShutdownTest` — repeated stop/restart and clean JVM shutdown-hook behavior.
+- `PremodernClient.PresentationTests` — duplicate attacker/blocker badges, exact directional combat
+  labels, stability across battlefield changes, unique-name suppression, and hidden-card exclusion.
 
 Verification performed for this status snapshot:
 
@@ -447,6 +459,11 @@ Additional ordering verification on 2026-07-28:
 - `ItemOrderingBridgeTest`: **4/4 passed**.
 - `RemoteClientOrderingFallbackTest`: **1/1 passed**.
 - `JackalPupTriggerRegressionTest`: **2/2 passed**.
+- Godot C# `dotnet build`: **passed**, 0 warnings and 0 errors.
+
+Duplicate battlefield identity verification on 2026-07-28:
+
+- `PremodernClient.PresentationTests`: **passed**, 40 assertions.
 - Godot C# `dotnet build`: **passed**, 0 warnings and 0 errors.
 
 Major coverage gaps are a real Godot-driven full match, two humans, end-to-end networked trample, unsupported callback discovery/coverage, and automated C# protocol/UI tests.

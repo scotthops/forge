@@ -26,6 +26,8 @@ public partial class CardControl : Control
 	private Panel attackingFrame = null!;
 	private Panel blockingFrame = null!;
 	private PanelContainer attackingBadge = null!;
+	private PanelContainer instanceBadge = null!;
+	private Label instanceLabel = null!;
 	private PanelContainer relationshipBadge = null!;
 	private Label relationshipLabel = null!;
 	private string displayName = string.Empty;
@@ -33,6 +35,7 @@ public partial class CardControl : Control
 	private bool primaryPressStarted;
 	private bool primaryActionEnabled;
 	private bool tappedLayoutEnabled;
+	private string instanceText = string.Empty;
 	private string relationshipText = string.Empty;
 
 	public bool Actionable { get; private set; }
@@ -52,6 +55,8 @@ public partial class CardControl : Control
 		attackingFrame = GetNode<Panel>("%AttackingFrame");
 		blockingFrame = GetNode<Panel>("%BlockingFrame");
 		attackingBadge = GetNode<PanelContainer>("%AttackingBadge");
+		instanceBadge = GetNode<PanelContainer>("%InstanceBadge");
+		instanceLabel = GetNode<Label>("%InstanceLabel");
 		relationshipBadge = GetNode<PanelContainer>("%RelationshipBadge");
 		relationshipLabel = GetNode<Label>("%RelationshipLabel");
 		MouseExited += () => primaryPressStarted = false;
@@ -115,6 +120,15 @@ public partial class CardControl : Control
 	public void SetRelationshipText(string text)
 	{
 		relationshipText = text;
+		if (IsNodeReady())
+		{
+			RefreshVisualState();
+		}
+	}
+
+	public void SetInstanceBadge(string text)
+	{
+		instanceText = text;
 		if (IsNodeReady())
 		{
 			RefreshVisualState();
@@ -209,6 +223,8 @@ public partial class CardControl : Control
 		attackingFrame.Visible = Attacking;
 		blockingFrame.Visible = Blocking;
 		attackingBadge.Visible = Attacking;
+		instanceLabel.Text = instanceText;
+		instanceBadge.Visible = !string.IsNullOrWhiteSpace(instanceText);
 		relationshipLabel.Text = relationshipText;
 		relationshipBadge.Visible = !string.IsNullOrWhiteSpace(relationshipText);
 	}

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../premodern-client/Protocol/BridgeMessages.cs" Link="BridgeMessages.cs" />
+    <Compile Include="../premodern-client/Presentation/BattlefieldCardIdentityMap.cs"
+             Link="BattlefieldCardIdentityMap.cs" />
+    <Compile Include="../premodern-client/Presentation/CombatPresentation.cs"
+             Link="CombatPresentation.cs" />
+  </ItemGroup>
+</Project>

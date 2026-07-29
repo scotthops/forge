@@ -3,6 +3,7 @@
 using Godot;
 using PremodernClient;
 using PremodernClient.Bridge;
+using PremodernClient.Presentation;
 using PremodernClient.Protocol;
 using System;
 using System.Collections.Generic;
@@ -23,6 +24,7 @@ public partial class Main : Control
 	[Export] public string Username { get; set; } = "Godot Bridge Client";
 
 	private readonly BridgeClientState clientState = new();
+	private readonly BattlefieldCardIdentityMap battlefieldIdentities = new();
 	private static readonly Regex LondonMulliganPrompt = new(
 		@"^Return\s+(?<remaining>\d+)\s+card\(s\)\s+to the bottom of your library\.?$",
 		RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -190,6 +192,7 @@ public partial class Main : Control
 
 		PlayerSnapshot? localPlayer = FindLocalPlayer(state);
 		PlayerSnapshot? opponent = state?.Players.FirstOrDefault(player => player.Id != localPlayer?.Id);
+		battlefieldIdentities.Update(state, localPlayer?.Id);
 		RenderPlayerArea(yourHeader, "You", localPlayer, interaction, true);
 		RenderPlayerArea(opponentHeader, "Opponent", opponent, interaction, false);
 		RenderPlayerIndicators(localPlayer, state, yourTurnIndicator, yourPriorityIndicator);
@@ -258,7 +261,13 @@ public partial class Main : Control
 			bool blocking = state?.Combat.Any(
 				assignment => assignment.BlockerCardIds.Contains(card.Id)) == true;
 			bool selected = highlightedIds.Contains(card.Id);
-			string relationshipText = CombatRelationshipText(card.Id, state);
+			string relationshipText = CombatPresentation.CardRelationshipText(
+				card.Id, state, battlefieldIdentities);
+			string instanceBadge = battlefieldIdentities.TryGet(
+				card.Id, out BattlefieldCardIdentity? identity)
+				&& identity != null
+				? identity.Badge ?? string.Empty
+				: string.Empty;
 			Texture2D? texture = null;
 			if (!card.Hidden && !string.IsNullOrWhiteSpace(card.Name)
 				&& cardImages.TryGetTexture(card.Name, out Texture2D resolvedTexture))
@@ -280,6 +289,7 @@ public partial class Main : Control
 			cardControl.SetSelected(selected);
 			cardControl.SetAttacking(attacking);
 			cardControl.SetBlocking(blocking);
+			cardControl.SetInstanceBadge(instanceBadge);
 			cardControl.SetRelationshipText(relationshipText);
 			if (renderTappedState)
 			{
@@ -468,7 +478,7 @@ public partial class Main : Control
 			|| !string.Equals(interaction.Reason, "buttons", StringComparison.Ordinal);
 	}
 
-	private static string? PlayerFacingPrompt(InteractionMessage interaction, StateMessage? state,
+	private string? PlayerFacingPrompt(InteractionMessage interaction, StateMessage? state,
 		PlayerSnapshot? localPlayer)
 	{
 		if (IsDeclareBlockers(state, interaction))
@@ -524,7 +534,7 @@ public partial class Main : Control
 			&& (state!.Combat.Count > 0 || interaction.CombatSelectableCardIds.Count > 0);
 	}
 
-	private static string BlockerDeclarationPrompt(InteractionMessage interaction,
+	private string BlockerDeclarationPrompt(InteractionMessage interaction,
 		StateMessage state)
 	{
 		HashSet<int> attackerIds = state.Combat
@@ -540,7 +550,7 @@ public partial class Main : Control
 		List<string> lines = ["DECLARE BLOCKERS", string.Empty];
 		if (selectedAttackerId.HasValue)
 		{
-			string attackerName = CardNameById(state, selectedAttackerId.Value);
+			string attackerName = battlefieldIdentities.QualifiedLabel(selectedAttackerId.Value);
 			lines.Add($"Current attacker: {attackerName}");
 			lines.Add(interaction.WeaklySelectableCardIds.Count > 0
 				? "Select a green creature to block it. Click it again to remove that assignment."
@@ -553,11 +563,8 @@ public partial class Main : Control
 
 		lines.Add(string.Empty);
 		lines.Add("ASSIGNMENTS");
-		List<string> assignments = state.Combat
-			.SelectMany(combat => combat.BlockerCardIds.Select(blockerId =>
-				$"{CardNameById(state, blockerId)} → "
-				+ CardNameById(state, combat.AttackerCardId)))
-			.ToList();
+		IReadOnlyList<string> assignments = CombatPresentation.AssignmentSummaries(
+			state, battlefieldIdentities);
 		lines.AddRange(assignments.Count == 0
 			? ["None — leaving this empty declares no blockers if Forge permits it."]
 			: assignments);
@@ -1021,34 +1028,6 @@ public partial class Main : Control
 		}));
 	}
 
-	private static string CombatRelationshipText(int cardId, StateMessage? state)
-	{
-		if (state == null)
-		{
-			return string.Empty;
-		}
-
-		List<string> relationships = [];
-		CombatSnapshot? attacking = state.Combat.FirstOrDefault(
-			assignment => assignment.AttackerCardId == cardId);
-		if (attacking != null && attacking.BlockerCardIds.Count > 0)
-		{
-			relationships.Add("BLOCKED BY:\n" + string.Join(", ",
-				attacking.BlockerCardIds.Select(id => CardNameById(state, id))));
-		}
-
-		List<int> blockedAttackers = state.Combat
-			.Where(assignment => assignment.BlockerCardIds.Contains(cardId))
-			.Select(assignment => assignment.AttackerCardId)
-			.ToList();
-		if (blockedAttackers.Count > 0)
-		{
-			relationships.Add("BLOCKING:\n" + string.Join(", ",
-				blockedAttackers.Select(id => CardNameById(state, id))));
-		}
-		return string.Join("\n", relationships);
-	}
-
 	private static string CardTooltip(CardSnapshot card, bool actionable,
 		bool primaryActionEnabled, bool attacking, bool blocking, bool selected,
 		string relationshipText)
@@ -1066,16 +1045,6 @@ public partial class Main : Control
 		states.Add(Value(card.Zone));
 		states.Add($"id={card.Id}");
 		return string.Join(" | ", states);
-	}
-
-	private static string CardNameById(StateMessage state, int cardId)
-	{
-		CardSnapshot? card = state.Players
-			.SelectMany(player => player.HandVisible
-				.Concat(player.Battlefield)
-				.Concat(player.Graveyard))
-			.FirstOrDefault(candidate => candidate.Id == cardId);
-		return card == null ? $"Card #{cardId}" : CardName(card);
 	}
 
 	private static void ClearChildren(Node parent)
