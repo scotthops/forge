@@ -83,12 +83,14 @@ public partial class Main : Control
 		string projectDirectory = ProjectSettings.GlobalizePath("res://");
 		try
 		{
+			string username = ResolveUsername(Username, OS.GetCmdlineUserArgs());
+			GetWindow().Title = $"Premodern Client - {username}";
 			bridge.Start(new BridgeLaunchOptions(
 				JavaExecutable,
 				ResolvePath(projectDirectory, BridgeJarPath),
 				Host,
 				Port,
-				Username,
+				username,
 				ResolvePath(projectDirectory, AssetsDirectory),
 				Path.GetFullPath(Path.Combine(projectDirectory, ".."))));
 		}
@@ -98,6 +100,31 @@ public partial class Main : Control
 			GD.PushError($"Could not launch forge-bridge: {exception.Message}");
 		}
 		RenderUi();
+	}
+
+	private static string ResolveUsername(string configuredUsername, string[] userArgs)
+	{
+		string username = configuredUsername;
+		bool overridden = false;
+		for (int index = 0; index < userArgs.Length; index++)
+		{
+			if (userArgs[index] != "--username")
+			{
+				continue;
+			}
+			if (overridden || index + 1 >= userArgs.Length)
+			{
+				throw new ArgumentException("Provide --username exactly once with a non-empty name.");
+			}
+			username = userArgs[++index];
+			overridden = true;
+		}
+		username = username.Trim();
+		if (username.Length == 0 || username.Contains('\n') || username.Contains('\r'))
+		{
+			throw new ArgumentException("Bridge username must be non-empty and contain no line breaks.");
+		}
+		return username;
 	}
 
 	public override void _Process(double delta)
