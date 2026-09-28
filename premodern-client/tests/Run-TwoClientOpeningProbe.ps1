@@ -1,9 +1,16 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string] $GodotExecutable
+    [string] $GodotExecutable,
+
+    [switch] $ThroughTurnTwo,
+
+    [switch] $PlayLand
 )
 
 $ErrorActionPreference = 'Stop'
+if ($ThroughTurnTwo -and $PlayLand) {
+    throw 'Choose either -ThroughTurnTwo or -PlayLand.'
+}
 $repository = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $godotPath = (Resolve-Path -LiteralPath $GodotExecutable).Path
 $hostJar = Join-Path $repository 'forge-gui-desktop\target\forge-gui-desktop-2.0.14-SNAPSHOT-jar-with-dependencies.jar'
@@ -27,7 +34,7 @@ function Has-Line([string] $path, [string] $pattern) {
 try {
     $classpath = "$hostClasses;$hostJar"
     $serverProcess = Start-Process -FilePath 'java' `
-        -ArgumentList @('-cp', $classpath, 'forge.net.GodotTwoHumanSlighHostMain', '36743', '60') `
+        -ArgumentList @('-cp', $classpath, 'forge.net.GodotTwoHumanSlighHostMain', '36743', '90') `
         -WorkingDirectory (Join-Path $repository 'forge-gui') -WindowStyle Hidden `
         -RedirectStandardOutput (Join-Path $logs 'host.out') `
         -RedirectStandardError (Join-Path $logs 'host.err') -PassThru
@@ -41,17 +48,24 @@ try {
     }
 
     foreach ($name in @('SlighA', 'SlighB')) {
+        $arguments = @('--headless', '--log-file', (Join-Path $logs "$name.godot.log"),
+            '--path', (Join-Path $repository 'premodern-client'),
+            '--script', 'res://tests/TwoClientOpeningProbe.gd', '--', '--username', $name)
+        if ($ThroughTurnTwo) {
+            $arguments += '--through-turn-two'
+        }
+        if ($PlayLand) {
+            $arguments += '--play-land'
+        }
         $client = Start-Process -FilePath $godotPath `
-            -ArgumentList @('--headless', '--log-file', (Join-Path $logs "$name.godot.log"),
-                '--path', (Join-Path $repository 'premodern-client'),
-                '--script', 'res://tests/TwoClientOpeningProbe.gd', '--', '--username', $name) `
+            -ArgumentList $arguments `
             -WorkingDirectory $repository -WindowStyle Hidden `
             -RedirectStandardOutput (Join-Path $logs "$name.out") `
             -RedirectStandardError (Join-Path $logs "$name.err") -PassThru
         $clients += $client
     }
 
-    $deadline = [datetime]::UtcNow.AddSeconds(90)
+    $deadline = [datetime]::UtcNow.AddSeconds(120)
     while (($clients | Where-Object { -not $_.HasExited }).Count -gt 0) {
         if ($serverProcess.HasExited -or [datetime]::UtcNow -ge $deadline) {
             throw "Godot clients did not complete the opening probe; see $logs"
@@ -63,6 +77,7 @@ try {
     $results = foreach ($index in 0..1) {
         $name = @('SlighA', 'SlighB')[$index]
         $output = Join-Path $logs "$name.out"
+        $diagnostics = Join-Path $logs "$name.err"
         [pscustomobject]@{
             Name = $name
             ExitCode = $clients[$index].ExitCode
@@ -71,18 +86,49 @@ try {
             Keep = Has-Line $output 'PROBE_CHOICE Keep'
             YourTurn = (Has-Line $output 'turn=TURN 1 — YOUR TURN')
             OpponentTurn = (Has-Line $output 'turn=TURN 1 — OPPONENT''S TURN')
+            Pass = Has-Line $output 'PROBE_PASS count='
+            YourTurnTwo = (Has-Line $output 'turn=TURN 2 — YOUR TURN')
+            OpponentTurnTwo = (Has-Line $output 'turn=TURN 2 — OPPONENT''S TURN')
+            LandClick = Has-Line $output 'PROBE_LAND_CLICK'
+            LandOwn = Has-Line $output 'PROBE_LAND_OWN'
+            LandOpponent = Has-Line $output 'PROBE_LAND_OPPONENT'
             Failure = Has-Line $output 'PROBE_FAIL'
+            ProtocolError = (Has-Line $output 'STALE_INTERACTION') -or `
+                (Has-Line $output 'Bridge error ') -or (Has-Line $diagnostics 'ERROR:')
         }
     }
     Write-Output "Logs: $logs"
     Write-Output "Forge host started: $hostStarted"
-    $results | Format-Table -AutoSize | Out-String | Write-Output
+    if ($PlayLand) {
+        $results | Select-Object Name, ExitCode, Play, OpeningHand, Keep,
+            LandClick, LandOwn, LandOpponent, ProtocolError `
+            | Format-Table -AutoSize | Out-String | Write-Output
+    } elseif ($ThroughTurnTwo) {
+        $results | Select-Object Name, ExitCode, Play, OpeningHand, Keep,
+            Pass, YourTurnTwo, OpponentTurnTwo, ProtocolError `
+            | Format-Table -AutoSize | Out-String | Write-Output
+    } else {
+        $results | Select-Object Name, ExitCode, Play, OpeningHand, Keep,
+            YourTurn, OpponentTurn, ProtocolError `
+            | Format-Table -AutoSize | Out-String | Write-Output
+    }
     if (-not $hostStarted -or ($results | Where-Object {
-                $_.ExitCode -ne 0 -or -not $_.OpeningHand -or -not $_.Keep -or $_.Failure
+                $_.ExitCode -ne 0 -or -not $_.OpeningHand -or -not $_.Keep `
+                    -or $_.Failure -or $_.ProtocolError
             }) -or ($results | Where-Object Play).Count -ne 1 `
             -or ($results | Where-Object YourTurn).Count -ne 1 `
             -or ($results | Where-Object OpponentTurn).Count -ne 1) {
         throw "Two-client Godot opening probe failed; see $logs"
+    }
+    if ($ThroughTurnTwo -and (($results | Where-Object { -not $_.Pass }).Count -ne 0 `
+            -or ($results | Where-Object YourTurnTwo).Count -ne 1 `
+            -or ($results | Where-Object OpponentTurnTwo).Count -ne 1)) {
+        throw "Two-client turn progression failed; see $logs"
+    }
+    if ($PlayLand -and (($results | Where-Object LandClick).Count -ne 1 `
+            -or ($results | Where-Object LandOwn).Count -ne 1 `
+            -or ($results | Where-Object LandOpponent).Count -ne 1)) {
+        throw "Two-client land projection failed; see $logs"
     }
 } finally {
     foreach ($client in $clients) {
