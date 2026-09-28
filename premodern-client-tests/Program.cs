@@ -4,6 +4,7 @@ using PremodernClient.Presentation;
 using PremodernClient.Protocol;
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 
 internal static class Program
 {
@@ -14,7 +15,49 @@ internal static class Program
 		DuplicateCardsHaveDistinctCombatLabels();
 		LabelsRemainStableAsBattlefieldsChange();
 		HiddenAndUniqueCardsDoNotGainBadges();
+		GenericChoiceProtocolIsCorrelated();
+		RevealPersistsIndependentlyOfState();
 		Console.WriteLine($"Presentation identity tests passed ({assertions} assertions).");
+	}
+
+	private static void GenericChoiceProtocolIsCorrelated()
+	{
+		const string json = "{\"schemaVersion\":1,\"type\":\"query\",\"requestId\":\"q-9\","
+			+ "\"kind\":\"genericChoice\",\"prompt\":\"Choose a card name\",\"min\":1,\"max\":1,"
+			+ "\"options\":[{\"optionId\":\"option-7\",\"label\":\"Mountain\",\"selected\":false}]}";
+		QueryMessage query = (QueryMessage)BridgeProtocolParser.Parse(json);
+		Equal("q-9", query.RequestId);
+		Equal("genericChoice", query.Kind);
+		Equal(1, query.Min);
+		Equal(1, query.Max);
+		Equal("option-7", query.Options[0].OptionId);
+		Equal("Mountain", query.Options[0].Label);
+
+		BridgeClientState state = new();
+		state.Apply(query);
+		state.Apply(new ErrorMessage(1, "invalidGenericChoice", "bad ID", "q-9",
+			null, null, null, null));
+		True(state.PendingQuery?.RequestId == "q-9",
+			"A rejected generic reply must leave the query pending.");
+		GenericChoiceReplyCommand reply = new("q-9", ["option-7"]);
+		using JsonDocument command = JsonDocument.Parse(BridgeCommandSerializer.Serialize(reply));
+		Equal("q-9", command.RootElement.GetProperty("requestId").GetString());
+		Equal("option-7", command.RootElement.GetProperty("selectedOptionIds")[0].GetString());
+		state.RecordCommandSent(reply);
+		Equal<QueryMessage?>(null, state.PendingQuery);
+	}
+
+	private static void RevealPersistsIndependentlyOfState()
+	{
+		const string json = "{\"schemaVersion\":1,\"type\":\"reveal\","
+			+ "\"message\":\"Revealed card\",\"items\":[{\"optionId\":\"reveal-1\","
+			+ "\"label\":\"Mountain\",\"cardId\":42}]}";
+		RevealMessage reveal = (RevealMessage)BridgeProtocolParser.Parse(json);
+		BridgeClientState client = new();
+		client.Apply(reveal);
+		client.Apply(State([], [], []));
+		Equal("Mountain", client.LatestReveal?.Items[0].Label);
+		Equal(42, client.LatestReveal?.Items[0].CardId);
 	}
 
 	private static void DuplicateCardsHaveDistinctCombatLabels()

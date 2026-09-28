@@ -380,13 +380,49 @@ public final class BridgeGuiGame extends NetworkGuiGame {
     @Override
     public <T> List<T> getChoices(String message, int min, int max, List<T> choices,
             List<T> selected, FSerializableFunction<T, String> display) {
-        protocol.unsupportedQuery("getChoices", choices);
-        listener.interactionObserved();
-        listener.unsupportedRequiredQuery();
-        if (min <= 0) {
+        List<T> offered = choices == null ? Collections.emptyList() : List.copyOf(choices);
+        // AbstractGuiGame.reveal is implemented as getChoices(message, -1, -1, items).
+        // RemoteClientGuiGame therefore carries an informational reveal over TCP using this
+        // sentinel callback rather than invoking this client's reveal method directly.
+        if (min == -1 && max == -1) {
+            reveal(message, offered);
+            return offered;
+        }
+        if (offered.isEmpty() && min == 0) {
             return Collections.emptyList();
         }
-        throw new UnsupportedOperationException("forge-bridge Spike E cannot answer required getChoices");
+        if (min < 0 || max < min || max > offered.size()) {
+            throw unsupported("getChoicesInvalidBounds", offered);
+        }
+        listener.interactionObserved();
+        List<T> result = protocol.queryGenericChoices(message, min, max, offered, selected, display);
+        if (result == null) {
+            protocol.lifecycle("requiredDecisionFailed", "kind=genericChoice");
+            listener.unsupportedRequiredQuery();
+            throw new IllegalStateException("Required generic choice did not receive a valid reply");
+        }
+        return result;
+    }
+
+    @Override
+    public <T> void reveal(String message, List<T> items) {
+        List<BridgeProtocol.RevealedItem> revealed = new ArrayList<>();
+        List<T> offered = items == null ? Collections.emptyList() : items;
+        for (int index = 0; index < offered.size(); index++) {
+            Object item = offered.get(index);
+            Integer cardId = null;
+            String label;
+            if (item instanceof CardView card) {
+                boolean visible = card.canBeShownToAny(getLocalPlayers());
+                cardId = visible ? card.getId() : null;
+                label = visible ? card.getName() : "Hidden card";
+            } else {
+                label = String.valueOf(item);
+            }
+            revealed.add(new BridgeProtocol.RevealedItem(
+                    "reveal-" + (index + 1), label, cardId));
+        }
+        protocol.reveal(message, revealed);
     }
 
     @Override

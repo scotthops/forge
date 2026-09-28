@@ -7,6 +7,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../premodern-client/Protocol/BridgeMessages.cs" Link="BridgeMessages.cs" />
+    <Compile Include="../premodern-client/Protocol/BridgeProtocolParser.cs" Link="BridgeProtocolParser.cs" />
+    <Compile Include="../premodern-client/Protocol/BridgeCommands.cs" Link="BridgeCommands.cs" />
+    <Compile Include="../premodern-client/Protocol/BridgeClientState.cs" Link="BridgeClientState.cs" />
     <Compile Include="../premodern-client/Presentation/BattlefieldCardIdentityMap.cs"
              Link="BattlefieldCardIdentityMap.cs" />
     <Compile Include="../premodern-client/Presentation/CombatPresentation.cs"

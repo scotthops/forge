@@ -10,12 +10,19 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /** A Forge-independent JSONL client used only by the Spike E process test. */
 public final class ExternalJsonDriverMain {
     private static final int SCHEMA_VERSION = 1;
+    private static final long FAILURE_DEADLINE_SECONDS = 90;
+    private static final int RECENT_MESSAGE_LIMIT = 12;
 
     private enum Stage {
         PREPARE_LAND,
@@ -47,9 +54,13 @@ public final class ExternalJsonDriverMain {
     private int mountainId = -1;
     private boolean abilityReplied;
     private boolean landAbilityReplied;
+    private boolean landSelectionHandled;
     private boolean hardeningProbesSent;
     private boolean stackReadyToPass;
     private JsonObject pendingAsyncCommand;
+    private String pendingQuery = "none";
+    private String lastInteraction = "none";
+    private final Deque<String> recentMessages = new ArrayDeque<>();
 
     private ExternalJsonDriverMain(Target target) {
         this.target = target;
@@ -62,11 +73,21 @@ public final class ExternalJsonDriverMain {
     }
 
     private boolean run() throws Exception {
+        ScheduledExecutorService deadline = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "external-json-driver-deadline");
+            thread.setDaemon(true);
+            return thread;
+        });
+        deadline.schedule(() -> {
+            printFailureDiagnostics("bounded failure deadline expired");
+            System.exit(2);
+        }, FAILURE_DEADLINE_SECONDS, TimeUnit.SECONDS);
         try (BufferedReader input = new BufferedReader(new InputStreamReader(
                 System.in, StandardCharsets.UTF_8))) {
             String line;
             while ((line = input.readLine()) != null) {
                 JsonObject message = JsonParser.parseString(line).getAsJsonObject();
+                remember(message);
                 if (integer(message, "schemaVersion", -1) != SCHEMA_VERSION) {
                     System.err.println("DRIVER_FAILURE unsupported bridge schema: " + line);
                     return false;
@@ -77,8 +98,8 @@ public final class ExternalJsonDriverMain {
                     indexState();
                     if (resolved()) {
                         System.err.println("DRIVER_SUCCESS boltId=" + boltId + " target=" + target
-                                + " landAbilityReply=" + landAbilityReplied
-                                + " abilityReply=" + abilityReplied);
+                                + " landAbilitySelection=" + (landAbilityReplied ? "explicit" : "automatic")
+                                + " abilitySelection=" + (abilityReplied ? "explicit" : "automatic"));
                         return true;
                     }
                     passResolvedSpellIfReady();
@@ -92,8 +113,10 @@ public final class ExternalJsonDriverMain {
                     handleActionAccepted(message);
                 }
             }
+        } finally {
+            deadline.shutdownNow();
         }
-        System.err.println("DRIVER_FAILURE bridge output closed before resolution stage=" + stage);
+        printFailureDiagnostics("bridge output closed before resolution");
         return false;
     }
 
@@ -110,6 +133,7 @@ public final class ExternalJsonDriverMain {
             if (mountainOnBattlefield != null) {
                 mountainId = integer(mountainOnBattlefield, "id", mountainId);
                 if (stage == Stage.WAIT_LAND) {
+                    landSelectionHandled = true;
                     stage = Stage.WAIT_BOLT;
                 }
             } else if (mountainInHand != null && mountainId < 0) {
@@ -131,6 +155,7 @@ public final class ExternalJsonDriverMain {
 
     private void handleInteraction(JsonObject interaction) {
         long sequence = interaction.get("interactionSequence").getAsLong();
+        lastInteraction = "sequence=" + sequence + " reason=" + string(interaction, "reason");
         if (!actedInteractions.add(sequence)) {
             return;
         }
@@ -157,19 +182,25 @@ public final class ExternalJsonDriverMain {
 
         JsonArray selectable = interaction.getAsJsonArray("selectableCardIds");
         JsonArray selectablePlayers = interaction.getAsJsonArray("selectablePlayerIds");
-        if (stage == Stage.WAIT_TARGET && actionableSnapshot && target == Target.SELF
+        // Forge may ask the bridge to choose among multiple abilities, or may select a single
+        // unambiguous ability itself. The first structured target offer is authoritative evidence
+        // that the latter path has completed; no synthetic ability event is required.
+        if (stage == Stage.WAIT_ABILITY && targetIsOffered(selectable, selectablePlayers)) {
+            stage = Stage.WAIT_TARGET;
+        }
+        if (stage == Stage.WAIT_TARGET && target == Target.SELF
                 && contains(selectablePlayers, bobId)) {
             sendTracked(commandWithId("selectPlayer", "playerId", bobId, sequence));
             stage = Stage.WAIT_MANA;
             return;
         }
-        if (stage == Stage.WAIT_TARGET && actionableSnapshot && target == Target.OPPONENT
+        if (stage == Stage.WAIT_TARGET && target == Target.OPPONENT
                 && contains(selectablePlayers, aliceId)) {
             sendTracked(commandWithId("selectPlayer", "playerId", aliceId, sequence));
             stage = Stage.WAIT_MANA;
             return;
         }
-        if (stage == Stage.WAIT_TARGET && actionableSnapshot && target == Target.CARD
+        if (stage == Stage.WAIT_TARGET && target == Target.CARD
                 && contains(selectable, elvesId)) {
             sendTracked(commandWithId("selectCard", "cardId", elvesId, sequence));
             stage = Stage.WAIT_MANA;
@@ -220,6 +251,7 @@ public final class ExternalJsonDriverMain {
     }
 
     private void handleQuery(JsonObject query) {
+        pendingQuery = "requestId=" + string(query, "requestId") + " kind=" + string(query, "kind");
         if (!"abilityChoice".equals(string(query, "kind"))) {
             System.err.println("DRIVER_UNSUPPORTED_QUERY " + gson.toJson(query));
             return;
@@ -253,6 +285,7 @@ public final class ExternalJsonDriverMain {
         reply.addProperty("requestId", string(query, "requestId"));
         reply.addProperty("selectedId", selected.get("id").getAsInt());
         send(reply);
+        pendingQuery = "none";
         if (landQuery) {
             landAbilityReplied = true;
         } else {
@@ -309,7 +342,7 @@ public final class ExternalJsonDriverMain {
     }
 
     private boolean resolved() {
-        if (stage != Stage.WAIT_RESOLUTION || !landAbilityReplied || !abilityReplied) {
+        if (stage != Stage.WAIT_RESOLUTION || !landSelectionHandled) {
             return false;
         }
         JsonObject alice = playerNamed("Alice (Host AI)");
@@ -323,6 +356,42 @@ public final class ExternalJsonDriverMain {
         case OPPONENT -> integer(alice, "life", -1) == 17 && integer(bob, "life", -1) == 20;
         case SELF -> integer(bob, "life", -1) == 17 && integer(alice, "life", -1) == 20;
         };
+    }
+
+    private boolean targetIsOffered(JsonArray cards, JsonArray players) {
+        return switch (target) {
+        case CARD -> contains(cards, elvesId);
+        case OPPONENT -> contains(players, aliceId);
+        case SELF -> contains(players, bobId);
+        };
+    }
+
+    private void remember(JsonObject message) {
+        String summary = "type=" + string(message, "type");
+        if (message.has("interactionSequence")) {
+            summary += " interactionSequence=" + message.get("interactionSequence").getAsLong();
+        }
+        if (message.has("requestId")) {
+            summary += " requestId=" + string(message, "requestId");
+        }
+        if (message.has("reason")) {
+            summary += " reason=" + string(message, "reason");
+        }
+        if (message.has("kind")) {
+            summary += " kind=" + string(message, "kind");
+        }
+        recentMessages.addLast(summary);
+        while (recentMessages.size() > RECENT_MESSAGE_LIMIT) {
+            recentMessages.removeFirst();
+        }
+    }
+
+    private void printFailureDiagnostics(String reason) {
+        System.err.println("DRIVER_FAILURE " + reason + " stage=" + stage
+                + " pendingQuery={" + pendingQuery + "} pendingCommand="
+                + (pendingAsyncCommand == null ? "none" : gson.toJson(pendingAsyncCommand))
+                + " lastInteraction={" + lastInteraction + "}");
+        System.err.println("DRIVER_RECENT " + String.join(" | ", recentMessages));
     }
 
     private JsonObject playerNamed(String name) {

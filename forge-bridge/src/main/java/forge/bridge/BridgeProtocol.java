@@ -9,6 +9,7 @@ import forge.game.combat.CombatDamageAssignment;
 import forge.game.player.PlayerView;
 import forge.game.spellability.SpellAbilityView;
 import forge.gui.interfaces.IGuiGame;
+import forge.util.FSerializableFunction;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -48,6 +49,8 @@ final class BridgeProtocol implements AutoCloseable {
     private final Map<String, PendingCombatDamageQuery> pendingCombatDamageQueries =
             new ConcurrentHashMap<>();
     private final Map<String, PendingItemOrderQuery<?>> pendingItemOrderQueries =
+            new ConcurrentHashMap<>();
+    private final Map<String, PendingGenericChoiceQuery<?>> pendingGenericChoiceQueries =
             new ConcurrentHashMap<>();
     private Consumer<Command> actionHandler;
 
@@ -109,6 +112,47 @@ final class BridgeProtocol implements AutoCloseable {
                 .toList();
         return queryChoice("abilityChoice", hostCard, choices, outputChoices,
                 "synchronous ability choice");
+    }
+
+    <T> List<T> queryGenericChoices(String prompt, int min, int max, List<T> offered,
+            List<T> initiallySelected, FSerializableFunction<T, String> display) {
+        String requestId = "q-" + requestIds.incrementAndGet();
+        Map<String, T> choicesById = new LinkedHashMap<>();
+        List<GenericChoiceOption> options = new ArrayList<>(offered.size());
+        Set<T> selected = initiallySelected == null
+                ? Collections.emptySet() : new HashSet<>(initiallySelected);
+        for (int index = 0; index < offered.size(); index++) {
+            T choice = offered.get(index);
+            String optionId = "option-" + (index + 1);
+            choicesById.put(optionId, choice);
+            String label = display == null ? String.valueOf(choice) : display.apply(choice);
+            options.add(new GenericChoiceOption(optionId, clean(label), selected.contains(choice)));
+        }
+
+        GenericChoiceQueryMessage query = new GenericChoiceQueryMessage(
+                "query", requestId, "genericChoice", clean(prompt), min, max, options);
+        PendingGenericChoiceQuery<T> pending = new PendingGenericChoiceQuery<>(
+                choicesById, min, max, query, new CompletableFuture<>());
+        pendingGenericChoiceQueries.put(requestId, pending);
+        send(query);
+        try {
+            return pending.reply().get(queryTimeoutMillis, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            error("queryTimeout", "No reply received for required generic choice", requestId);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            error("queryInterrupted", "Generic choice was interrupted", requestId);
+        } catch (ExecutionException e) {
+            error("queryCancelled", clean(e.getCause() == null ? e.getMessage()
+                    : e.getCause().getMessage()), requestId);
+        } finally {
+            pendingGenericChoiceQueries.remove(requestId, pending);
+        }
+        return null;
+    }
+
+    void reveal(String message, List<RevealedItem> items) {
+        send(new RevealMessage("reveal", clean(message), List.copyOf(items)));
     }
 
     Map<CardView, Integer> queryCombatDamage(CardView attacker, List<CardView> blockers,
@@ -330,7 +374,9 @@ final class BridgeProtocol implements AutoCloseable {
         PendingChoiceQuery<?> pendingChoice = pendingChoiceQueries.get(requestId);
         PendingCombatDamageQuery pendingDamage = pendingCombatDamageQueries.get(requestId);
         PendingItemOrderQuery<?> pendingOrder = pendingItemOrderQueries.get(requestId);
-        if (pendingChoice == null && pendingDamage == null && pendingOrder == null) {
+        PendingGenericChoiceQuery<?> pendingGeneric = pendingGenericChoiceQueries.get(requestId);
+        if (pendingChoice == null && pendingDamage == null && pendingOrder == null
+                && pendingGeneric == null) {
             error("staleRequestId", "No pending query has this requestId", requestId);
             return;
         }
@@ -342,6 +388,10 @@ final class BridgeProtocol implements AutoCloseable {
             handleCombatDamageReply(input, requestId, pendingDamage);
             return;
         }
+        if (pendingGeneric != null) {
+            handleGenericChoiceReply(input, requestId, pendingGeneric);
+            return;
+        }
         Integer selectedId = integerField(input, "selectedId");
         Object selected = selectedId == null ? null : pendingChoice.choices().get(selectedId);
         if (selected == null) {
@@ -349,6 +399,48 @@ final class BridgeProtocol implements AutoCloseable {
             return;
         }
         completePending(pendingChoice, selected);
+    }
+
+    private void handleGenericChoiceReply(JsonObject input, String requestId,
+            PendingGenericChoiceQuery<?> pending) {
+        if (pending.reply().isDone()) {
+            error("staleRequestId", "This generic choice query was already answered", requestId);
+            return;
+        }
+        JsonElement selectionElement = input.get("selectedOptionIds");
+        if (selectionElement == null || !selectionElement.isJsonArray()) {
+            rejectGenericChoiceReply(requestId, pending,
+                    "Reply must contain a selectedOptionIds array");
+            return;
+        }
+        List<String> selectedIds = new ArrayList<>();
+        Set<String> distinct = new HashSet<>();
+        for (JsonElement element : selectionElement.getAsJsonArray()) {
+            if (!element.isJsonPrimitive() || !element.getAsJsonPrimitive().isString()) {
+                rejectGenericChoiceReply(requestId, pending,
+                        "Every selected option ID must be a string");
+                return;
+            }
+            String optionId = element.getAsString();
+            if (!pending.choicesById().containsKey(optionId) || !distinct.add(optionId)) {
+                rejectGenericChoiceReply(requestId, pending,
+                        "Selected option IDs must be distinct offered IDs");
+                return;
+            }
+            selectedIds.add(optionId);
+        }
+        if (selectedIds.size() < pending.min() || selectedIds.size() > pending.max()) {
+            rejectGenericChoiceReply(requestId, pending,
+                    "Select between " + pending.min() + " and " + pending.max() + " options");
+            return;
+        }
+        completePendingGenericChoice(pending, selectedIds);
+    }
+
+    private void rejectGenericChoiceReply(String requestId, PendingGenericChoiceQuery<?> pending,
+            String message) {
+        error("invalidGenericChoice", message, requestId);
+        send(pending.query());
     }
 
     private void handleItemOrderReply(JsonObject input, String requestId,
@@ -455,6 +547,11 @@ final class BridgeProtocol implements AutoCloseable {
         pending.reply().complete(new IGuiGame.OrderResult<>(ordered, rememberDecision));
     }
 
+    private static <T> void completePendingGenericChoice(PendingGenericChoiceQuery<T> pending,
+            List<String> selectedIds) {
+        pending.reply().complete(selectedIds.stream().map(pending.choicesById()::get).toList());
+    }
+
     private static void orderingFallback(String requestId, String reason) {
         System.err.println("[forge-bridge] Item ordering query " + requestId + " " + reason
                 + "; using the original Forge-provided order.");
@@ -523,6 +620,10 @@ final class BridgeProtocol implements AutoCloseable {
                 pending.reply().completeExceptionally(
                         new IllegalStateException("Bridge protocol closed")));
         pendingItemOrderQueries.clear();
+        pendingGenericChoiceQueries.forEach((requestId, pending) ->
+                pending.reply().completeExceptionally(
+                        new IllegalStateException("Bridge protocol closed")));
+        pendingGenericChoiceQueries.clear();
     }
 
     private record PendingChoiceQuery<T>(Map<Integer, T> choices, CompletableFuture<T> reply) { }
@@ -533,7 +634,11 @@ final class BridgeProtocol implements AutoCloseable {
 
     private record PendingItemOrderQuery<T>(Map<String, T> itemsById,
                                             ItemOrderingQueryMessage query,
-                                            CompletableFuture<IGuiGame.OrderResult<T>> reply) { }
+                                             CompletableFuture<IGuiGame.OrderResult<T>> reply) { }
+
+    private record PendingGenericChoiceQuery<T>(Map<String, T> choicesById, int min, int max,
+                                                 GenericChoiceQueryMessage query,
+                                                 CompletableFuture<List<T>> reply) { }
 
     private record LifecycleMessage(String type, String event, String detail) { }
 
@@ -570,7 +675,17 @@ final class BridgeProtocol implements AutoCloseable {
     private record ItemOrderingQueryMessage(String type, String requestId, String kind,
                                             String title, String prompt, boolean mandatory,
                                             boolean rememberAllowed, List<OrderingItem> items,
-                                            List<String> originalOrder) { }
+                                             List<String> originalOrder) { }
+
+    record RevealedItem(String optionId, String label, Integer cardId) { }
+
+    private record RevealMessage(String type, String message, List<RevealedItem> items) { }
+
+    private record GenericChoiceOption(String optionId, String label, boolean selected) { }
+
+    private record GenericChoiceQueryMessage(String type, String requestId, String kind,
+                                              String prompt, int min, int max,
+                                              List<GenericChoiceOption> options) { }
 
     private record UnsupportedQueryMessage(String type, String requestId, String kind,
                                            String offered, boolean replySupported) { }

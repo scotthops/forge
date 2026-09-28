@@ -47,6 +47,7 @@ public static class BridgeProtocolParser
                 "state" => ParseState(schemaVersion, root),
                 "interaction" => ParseInteraction(schemaVersion, root),
                 "query" => ParseQuery(schemaVersion, root),
+                "reveal" => ParseReveal(schemaVersion, root),
                 "error" => ParseError(schemaVersion, root),
                 "actionAccepted" => new ActionAcceptedMessage(schemaVersion,
                     String(root, "action"), NullableInt32(root, "selectedId"),
@@ -168,6 +169,15 @@ public static class BridgeProtocolParser
                 Boolean(choice, "canPlay")));
         }
 
+        List<GenericChoiceOption> options = [];
+        foreach (JsonElement option in Array(root, "options"))
+        {
+            options.Add(new GenericChoiceOption(
+                String(option, "optionId"),
+                String(option, "label"),
+                Boolean(option, "selected")));
+        }
+
         List<CombatDamageRecipient> recipients = [];
         foreach (JsonElement recipient in Array(root, "recipients"))
         {
@@ -204,11 +214,27 @@ public static class BridgeProtocolParser
             NullableInt32(root, "hostCardId"),
             String(root, "hostCardName"),
             choices,
+            NullableInt32(root, "min"),
+            NullableInt32(root, "max"),
+            options,
             NullableInt32(root, "totalDamage"),
             recipients,
             constraints,
             String(root, "offered"),
             NullableBoolean(root, "cancellable"));
+    }
+
+    private static RevealMessage ParseReveal(int schemaVersion, JsonElement root)
+    {
+        List<RevealedItem> items = [];
+        foreach (JsonElement item in Array(root, "items"))
+        {
+            items.Add(new RevealedItem(
+                String(item, "optionId"),
+                String(item, "label"),
+                NullableInt32(item, "cardId")));
+        }
+        return new RevealMessage(schemaVersion, String(root, "message"), items);
     }
 
     private static ErrorMessage ParseError(int schemaVersion, JsonElement root)

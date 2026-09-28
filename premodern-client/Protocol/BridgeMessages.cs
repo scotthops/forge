@@ -98,6 +98,9 @@ public sealed record QueryMessage(
     int? HostCardId,
     string? HostCardName,
     IReadOnlyList<QueryChoice> Choices,
+    int? Min,
+    int? Max,
+    IReadOnlyList<GenericChoiceOption> Options,
     int? TotalDamage,
     IReadOnlyList<CombatDamageRecipient> Recipients,
     CombatDamageConstraints? Constraints,
@@ -106,6 +109,16 @@ public sealed record QueryMessage(
     : BridgeMessage(SchemaVersion, "query");
 
 public sealed record QueryChoice(int Id, string? Description, bool CanPlay);
+
+public sealed record GenericChoiceOption(string? OptionId, string? Label, bool Selected);
+
+public sealed record RevealMessage(
+    int SchemaVersion,
+    string? Message,
+    IReadOnlyList<RevealedItem> Items)
+    : BridgeMessage(SchemaVersion, "reveal");
+
+public sealed record RevealedItem(string? OptionId, string? Label, int? CardId);
 
 public sealed record OrderingItem(
     string? ItemId,

@@ -26,6 +26,9 @@ than `1` with `UNSUPPORTED_SCHEMA_VERSION`. Rejected messages do not invoke Forg
 - `actionAccepted`: Confirms that an asynchronous action passed validation and was sent through
   `IGameController`.
 - `error`: A structured protocol or validation failure.
+- `reveal`: An informational, recipient-scoped reveal emitted in callback order. It is not a
+  choice request and requires no reply. Clients should retain it independently of later state
+  snapshots so the revealed information remains observable.
 
 Visible card snapshots include `isLand`, derived from the card's current Forge type. The value is
 `true` for any card whose current type includes Land, including artifact lands and creature lands.
@@ -77,6 +80,27 @@ offered recipient. Item-ordering queries return a complete permutation of the op
 that query. Replayed Forge callbacks receive new request IDs and must be answered independently.
 `requestId` is authoritative for synchronous replies; `interactionSequence` does not replace it.
 
+### Generic Choice
+
+`genericChoice` represents Forge's ordinary bounded `getChoices` callbacks. The query contains
+the Forge prompt, `min` and `max`, and an `options` array. Each option has a request-local opaque
+`optionId`, its Forge-derived display `label`, and whether Forge supplied it as initially selected.
+Clients may search or filter labels, but replies use only IDs; labels are never identity.
+
+A reply contains `selectedOptionIds`. The bridge rejects non-string, unknown, duplicate, and
+out-of-bounds selections with `invalidGenericChoice`, then reissues the still-pending query using
+the same `requestId`. An invalid reply does not unblock Forge. A reply received after completion
+or timeout produces `staleRequestId`.
+
+Required generic-choice timeout, interruption, or bridge closure emits a clear error and fails the
+current bridge session rather than silently returning an empty selection or selecting a default.
+
+`reveal` is deliberately separate. Its `items` have display `label` and optional `cardId`; hidden
+cards are redacted for a recipient that cannot see them. Reveal IDs are informational occurrence
+IDs and cannot be sent in a `reply`. Across Forge's TCP GUI boundary, `AbstractGuiGame.reveal`
+arrives at the bridge adapter as the explicit `getChoices(message, -1, -1, items)` informational
+sentinel; it is translated to `reveal`, never exposed as a selectable query.
+
 ### Item Ordering
 
 `itemOrdering` represents Forge total-order callbacks, including simultaneous spell abilities and
@@ -124,6 +148,14 @@ Synchronous query and reply:
 ```json
 {"schemaVersion":1,"type":"query","requestId":"q-7","kind":"abilityChoice","hostCardId":123,"hostCardName":"Lightning Bolt","choices":[{"id":456,"description":"Lightning Bolt deals 3 damage to any target.","canPlay":true}]}
 {"schemaVersion":1,"type":"reply","requestId":"q-7","selectedId":456}
+```
+
+Generic choice and informational reveal:
+
+```json
+{"schemaVersion":1,"type":"query","requestId":"q-8","kind":"genericChoice","prompt":"Choose a card name","min":1,"max":1,"options":[{"optionId":"option-1","label":"Mountain","selected":false},{"optionId":"option-2","label":"Shock","selected":false}]}
+{"schemaVersion":1,"type":"reply","requestId":"q-8","selectedOptionIds":["option-1"]}
+{"schemaVersion":1,"type":"reveal","message":"Revealed card","items":[{"optionId":"reveal-1","label":"Mountain","cardId":321}]}
 ```
 
 Simultaneous-trigger ordering and reply:

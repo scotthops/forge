@@ -36,7 +36,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-public class JsonBridgeIntegrationTest {
+public class
+JsonBridgeIntegrationTest {
     @BeforeClass
     public static void setUp() {
         TestUtils.ensureFModelInitialized();
@@ -44,7 +45,11 @@ public class JsonBridgeIntegrationTest {
 
     @DataProvider(name = "boltTargets")
     public Object[][] boltTargets() {
-        return new Object[][] {{"card"}, {"opponent"}, {"self"}};
+        String requestedTarget = System.getProperty("json.bridge.target");
+        if (requestedTarget != null && !requestedTarget.isBlank()) {
+            return new Object[][] {{requestedTarget}};
+        }
+        return new Object[][] {{"card"}, {"opponent"}, {"self"}, {"scroll"}};
     }
 
     @Test(dataProvider = "boltTargets", timeOut = 150000,
@@ -69,7 +74,7 @@ public class JsonBridgeIntegrationTest {
             lobby = new ServerGameLobby();
             server.setLobby(lobby);
             server.setLobbyListener(new LoggingLobbyListener());
-            configureLobby(lobby);
+            configureLobby(lobby, target);
 
             Path root = repositoryRoot();
             Path java = javaExecutable();
@@ -86,8 +91,11 @@ public class JsonBridgeIntegrationTest {
 
             String driverClasspath = root.resolve("forge-gui-desktop/target/test-classes")
                     + File.pathSeparator + gsonLocation();
+            String driverClass = "scroll".equals(target)
+                    ? ExternalCursedScrollDriverMain.class.getName()
+                    : ExternalJsonDriverMain.class.getName();
             driver = new ProcessBuilder(
-                    java.toString(), "-cp", driverClasspath, ExternalJsonDriverMain.class.getName(), target)
+                    java.toString(), "-cp", driverClasspath, driverClass, target)
                     .directory(root.toFile())
                     .redirectErrorStream(false)
                     .start();
@@ -127,7 +135,11 @@ public class JsonBridgeIntegrationTest {
 
             List<JsonObject> outputMessages = parseJsonLines(bridgeJson.toString());
             List<JsonObject> commands = parseJsonLines(driverJson.toString());
-            assertProtocolProof(outputMessages, commands, driverDiagnostics.toString(), target);
+            if ("scroll".equals(target)) {
+                assertCursedScrollProof(outputMessages, commands, driverDiagnostics.toString());
+            } else {
+                assertProtocolProof(outputMessages, commands, driverDiagnostics.toString(), target);
+            }
         } finally {
             FModel.getPreferences().setPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS, oldShowActionable);
             try {
@@ -144,8 +156,17 @@ public class JsonBridgeIntegrationTest {
         }
     }
 
-    private static void configureLobby(ServerGameLobby lobby) {
+    private static void configureLobby(ServerGameLobby lobby, String scenario) {
         var cardDb = FModel.getMagicDb().getCommonCards();
+        if ("scroll".equals(scenario)) {
+            var cursedScroll = cardDb.getCard("Cursed Scroll");
+            Assert.assertNotNull(cursedScroll);
+            Deck hostDeck = TestDeckLoader.createMinimalDeck("Forest", 20);
+            Deck bridgeDeck = TestDeckLoader.createMinimalDeck("Mountain", 12);
+            bridgeDeck.getMain().add(cursedScroll);
+            configureSlots(lobby, hostDeck, bridgeDeck);
+            return;
+        }
         var lightningBolt = cardDb.getCard("Lightning Bolt");
         var llanowarElves = cardDb.getCard("Llanowar Elves");
         Assert.assertNotNull(lightningBolt);
@@ -158,6 +179,10 @@ public class JsonBridgeIntegrationTest {
         }
         bridgeDeck.getMain().add(lightningBolt);
 
+        configureSlots(lobby, hostDeck, bridgeDeck);
+    }
+
+    private static void configureSlots(ServerGameLobby lobby, Deck hostDeck, Deck bridgeDeck) {
         LobbySlot host = lobby.getSlot(0);
         host.setType(LobbySlotType.AI);
         host.setName("Alice (Host AI)");
@@ -168,6 +193,81 @@ public class JsonBridgeIntegrationTest {
         remote.setType(LobbySlotType.OPEN);
         remote.setDeck(bridgeDeck);
         remote.setIsReady(false);
+    }
+
+    private static void assertCursedScrollProof(List<JsonObject> output,
+            List<JsonObject> commands, String driverDiagnostics) {
+        Assert.assertTrue(output.stream().allMatch(message -> integer(message, "schemaVersion", -1) == 1),
+                "Every bridge output must use schemaVersion 1");
+        int scrollId = findCardId(output, "Bob (JSON Driver)", "handVisible", "Cursed Scroll");
+        int aliceId = findPlayerId(output, "Alice (Host AI)");
+        Assert.assertTrue(scrollId >= 0, "Cursed Scroll never reached the visible hand");
+        Assert.assertTrue(commands.stream().filter(message -> "selectCard".equals(type(message)))
+                        .filter(message -> integer(message, "cardId", -1) == scrollId).count() >= 2,
+                "Driver did not both cast and activate Cursed Scroll");
+        Assert.assertTrue(hasPlayerSelection(commands, aliceId), "Driver did not select the opponent target");
+
+        JsonObject query = output.stream()
+                .filter(message -> "query".equals(type(message)))
+                .filter(message -> "genericChoice".equals(string(message, "kind")))
+                .findFirst().orElseThrow(() -> new AssertionError("No genericChoice query"));
+        Assert.assertEquals(integer(query, "min", -1), 1);
+        Assert.assertEquals(integer(query, "max", -1), 1);
+        JsonObject mountain = query.getAsJsonArray("options").asList().stream()
+                .map(JsonElement::getAsJsonObject)
+                .filter(option -> "Mountain".equals(string(option, "label")))
+                .findFirst().orElseThrow(() -> new AssertionError("Mountain was not offered"));
+        String requestId = string(query, "requestId");
+        String optionId = string(mountain, "optionId");
+        JsonObject reply = commands.stream()
+                .filter(message -> "reply".equals(type(message)))
+                .filter(message -> requestId.equals(string(message, "requestId")))
+                .findFirst().orElseThrow(() -> new AssertionError("No correlated name reply"));
+        Assert.assertEquals(reply.getAsJsonArray("selectedOptionIds").size(), 1);
+        Assert.assertEquals(reply.getAsJsonArray("selectedOptionIds").get(0).getAsString(), optionId);
+
+        int queryIndex = output.indexOf(query);
+        int targetAcceptedIndex = -1;
+        for (int i = 0; i < queryIndex; i++) {
+            JsonObject message = output.get(i);
+            if ("actionAccepted".equals(type(message))
+                    && "selectPlayer".equals(string(message, "action"))
+                    && integer(message, "selectedId", -1) == aliceId) {
+                targetAcceptedIndex = i;
+            }
+        }
+        Assert.assertTrue(targetAcceptedIndex >= 0,
+                "Forge did not accept the target before resolving the name choice");
+        int revealIndex = -1;
+        for (int i = queryIndex + 1; i < output.size(); i++) {
+            JsonObject message = output.get(i);
+            if ("reveal".equals(type(message))) {
+                revealIndex = i;
+                Assert.assertEquals(message.getAsJsonArray("items").size(), 1);
+                Assert.assertEquals(string(message.getAsJsonArray("items").get(0).getAsJsonObject(),
+                        "label"), "Mountain");
+                break;
+            }
+        }
+        Assert.assertTrue(revealIndex > queryIndex, "Reveal did not follow the name choice");
+        Assert.assertTrue(output.subList(revealIndex + 1, output.size()).stream()
+                        .filter(message -> "state".equals(type(message)))
+                        .anyMatch(message -> integer(playerNamed(message, "Alice (Host AI)"),
+                                "life", -1) == 18),
+                "Authoritative state never showed Cursed Scroll's 2 damage");
+        Assert.assertTrue(output.subList(revealIndex + 1, output.size()).stream()
+                        .filter(message -> "state".equals(type(message)))
+                        .map(message -> playerNamed(message, "Bob (JSON Driver)"))
+                        .filter(java.util.Objects::nonNull)
+                        .flatMap(player -> player.getAsJsonArray("battlefield").asList().stream())
+                        .map(JsonElement::getAsJsonObject)
+                        .anyMatch(card -> "Cursed Scroll".equals(string(card, "name"))
+                                && card.get("tapped").getAsBoolean()),
+                "Authoritative state did not retain the paid tap cost");
+        Assert.assertTrue(commands.stream().anyMatch(message -> "passPriority".equals(type(message))),
+                "Driver never passed the activated ability for resolution");
+        Assert.assertTrue(driverDiagnostics.contains("DRIVER_SUCCESS cursedScroll")
+                        && driverDiagnostics.contains("continuation=accepted"), driverDiagnostics);
     }
 
     private static void assertProtocolProof(List<JsonObject> output, List<JsonObject> commands,
@@ -225,11 +325,13 @@ public class JsonBridgeIntegrationTest {
                 .filter(message -> "query".equals(type(message)))
                 .filter(message -> "abilityChoice".equals(string(message, "kind")))
                 .filter(message -> "Lightning Bolt".equals(string(message, "hostCardName")))
-                .findFirst().orElseThrow(() -> new AssertionError("No synchronous abilityChoice query"));
-        String requestId = string(query, "requestId");
-        Assert.assertTrue(commands.stream().anyMatch(message -> "reply".equals(type(message))
-                        && requestId.equals(string(message, "requestId"))),
-                "No correlated abilityChoice reply for " + requestId);
+                .findFirst().orElse(null);
+        if (query != null) {
+            String requestId = string(query, "requestId");
+            Assert.assertTrue(commands.stream().anyMatch(message -> "reply".equals(type(message))
+                            && requestId.equals(string(message, "requestId"))),
+                    "No correlated abilityChoice reply for " + requestId);
+        }
 
         if ("card".equals(target)) {
             Assert.assertTrue(sawStackTarget(output, boltId, elvesId),
@@ -245,7 +347,8 @@ public class JsonBridgeIntegrationTest {
                     "The untargeted player life total changed");
         }
         Assert.assertTrue(driverDiagnostics.contains("DRIVER_SUCCESS")
-                        && driverDiagnostics.contains("abilityReply=true"),
+                        && (driverDiagnostics.contains("abilitySelection=explicit")
+                                || driverDiagnostics.contains("abilitySelection=automatic")),
                 driverDiagnostics);
     }
 

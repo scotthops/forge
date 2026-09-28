@@ -217,7 +217,7 @@ public partial class Main : Control
 		stackText.Text = $"STACK: {FormatStack(state?.Stack ?? [])}";
 
 		RenderInteraction(interaction, state, localPlayer);
-		RenderAbilityQuery(clientState.PendingQuery);
+		RenderAbilityQuery(clientState.PendingQuery, clientState.LatestReveal);
 		actionStatus.Text = clientState.LastActionStatus
 			?? clientState.LastError
 			?? "Choose only controls currently enabled by Forge.";
@@ -584,12 +584,23 @@ public partial class Main : Control
 			&& prompt.Contains(" Stack:", StringComparison.OrdinalIgnoreCase);
 	}
 
-	private void RenderAbilityQuery(QueryMessage? query)
+	private void RenderAbilityQuery(QueryMessage? query, RevealMessage? reveal)
 	{
 		ClearChildren(abilityChoices);
-		abilityPanel.Visible = query != null;
+		abilityPanel.Visible = query != null || reveal != null;
 		if (query == null)
 		{
+			if (reveal != null)
+			{
+				abilityTitle.Text = "FORGE REVEAL";
+				Label revealed = new()
+				{
+					Text = $"{Value(reveal.Message)}\n"
+						+ string.Join("\n", reveal.Items.Select(item => Value(item.Label))),
+					AutowrapMode = TextServer.AutowrapMode.WordSmart
+				};
+				abilityChoices.AddChild(revealed);
+			}
 			return;
 		}
 		if (query.Kind == "combatDamageAssignment"
@@ -603,6 +614,11 @@ public partial class Main : Control
 		if (query.Kind == "itemOrdering" && query.Items.Count > 0)
 		{
 			RenderItemOrderingQuery(query);
+			return;
+		}
+		if (query.Kind == "genericChoice")
+		{
+			RenderGenericChoiceQuery(query);
 			return;
 		}
 
@@ -629,6 +645,78 @@ public partial class Main : Control
 			button.Pressed += () => SendReply(requestId, selectedId);
 			abilityChoices.AddChild(button);
 		}
+	}
+
+	private void RenderGenericChoiceQuery(QueryMessage query)
+	{
+		string requestId = query.RequestId ?? string.Empty;
+		int min = query.Min ?? 0;
+		int max = query.Max ?? query.Options.Count;
+		abilityTitle.Text = $"FORGE CHOICE — select {min} to {max}\n{Value(query.Prompt)}";
+
+		LineEdit search = new()
+		{
+			PlaceholderText = "Search Forge-provided choices...",
+			ClearButtonEnabled = true
+		};
+		abilityChoices.AddChild(search);
+		Label status = new() { AutowrapMode = TextServer.AutowrapMode.WordSmart };
+		abilityChoices.AddChild(status);
+		VBoxContainer results = new();
+		abilityChoices.AddChild(results);
+		Button confirm = new() { Text = "Confirm selection" };
+		abilityChoices.AddChild(confirm);
+
+		HashSet<string> selected = query.Options
+			.Where(option => option.Selected && !string.IsNullOrWhiteSpace(option.OptionId))
+			.Select(option => option.OptionId!)
+			.ToHashSet(StringComparer.Ordinal);
+		const int resultLimit = 100;
+
+		void Refresh()
+		{
+			ClearChildren(results);
+			string filter = search.Text.Trim();
+			List<GenericChoiceOption> matches = query.Options
+				.Where(option => string.IsNullOrEmpty(filter)
+					|| Value(option.Label).Contains(filter, StringComparison.OrdinalIgnoreCase))
+				.Take(resultLimit + 1)
+				.ToList();
+			bool truncated = matches.Count > resultLimit;
+			if (truncated)
+			{
+				matches.RemoveAt(resultLimit);
+			}
+			foreach (GenericChoiceOption option in matches)
+			{
+				string optionId = option.OptionId ?? string.Empty;
+				CheckButton row = new()
+				{
+					Text = Value(option.Label),
+					ButtonPressed = selected.Contains(optionId),
+					Disabled = string.IsNullOrWhiteSpace(optionId)
+				};
+				row.Toggled += pressed =>
+				{
+					if (pressed)
+					{
+						if (max == 1) selected.Clear();
+						selected.Add(optionId);
+					}
+					else selected.Remove(optionId);
+					Refresh();
+				};
+				results.AddChild(row);
+			}
+			status.Text = $"Selected {selected.Count}; required {min} to {max}. "
+				+ $"Showing {Math.Min(matches.Count, resultLimit)}"
+				+ (truncated ? "+ matches — refine the search." : " matches.");
+			confirm.Disabled = selected.Count < min || selected.Count > max;
+		}
+
+		search.TextChanged += _ => Refresh();
+		confirm.Pressed += () => SendGenericChoiceReply(requestId, selected.ToArray());
+		Refresh();
 	}
 
 	private void RenderItemOrderingQuery(QueryMessage query)
@@ -907,6 +995,33 @@ public partial class Main : Control
 		GD.Print($"G3 ITEM_ORDER_REPLY requestId={requestId} "
 			+ $"order={string.Join(",", orderedItemIds)} remember={rememberDecision}");
 		SendCommand(new ItemOrderingReplyCommand(requestId, orderedItemIds, rememberDecision));
+	}
+
+	private void SendGenericChoiceReply(string requestId,
+		IReadOnlyList<string> selectedOptionIds)
+	{
+		QueryMessage? query = clientState.PendingQuery;
+		if (query == null || query.RequestId != requestId || query.Kind != "genericChoice")
+		{
+			actionStatus.Text = "That choice is no longer pending.";
+			return;
+		}
+		HashSet<string> offered = query.Options
+			.Select(option => option.OptionId ?? string.Empty)
+			.Where(optionId => optionId.Length > 0)
+			.ToHashSet(StringComparer.Ordinal);
+		int min = query.Min ?? 0;
+		int max = query.Max ?? offered.Count;
+		if (selectedOptionIds.Count < min || selectedOptionIds.Count > max
+			|| selectedOptionIds.Distinct(StringComparer.Ordinal).Count() != selectedOptionIds.Count
+			|| selectedOptionIds.Any(optionId => !offered.Contains(optionId)))
+		{
+			actionStatus.Text = $"Select between {min} and {max} offered choices.";
+			return;
+		}
+		GD.Print($"G3 GENERIC_CHOICE_REPLY requestId={requestId} "
+			+ $"selected={string.Join(",", selectedOptionIds)}");
+		SendCommand(new GenericChoiceReplyCommand(requestId, selectedOptionIds));
 	}
 
 	private void OnPassPriority()

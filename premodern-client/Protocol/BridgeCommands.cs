@@ -47,6 +47,11 @@ public sealed record ItemOrderingReplyCommand(
     bool RememberDecision = false)
     : BridgeCommand("reply");
 
+public sealed record GenericChoiceReplyCommand(
+    string RequestId,
+    IReadOnlyList<string> SelectedOptionIds)
+    : BridgeCommand("reply");
+
 public static class BridgeCommandSerializer
 {
     public static string Serialize(BridgeCommand command)
@@ -113,6 +118,15 @@ public static class BridgeCommandSerializer
             },
             ItemOrderingReplyCommand => throw new ArgumentException(
                 "An item ordering reply command requires a requestId.", nameof(command)),
+            GenericChoiceReplyCommand reply when !string.IsNullOrWhiteSpace(reply.RequestId) => new
+            {
+                schemaVersion = BridgeSchema.SupportedVersion,
+                type = reply.Type,
+                requestId = reply.RequestId,
+                selectedOptionIds = reply.SelectedOptionIds
+            },
+            GenericChoiceReplyCommand => throw new ArgumentException(
+                "A generic choice reply command requires a requestId.", nameof(command)),
             _ => throw new ArgumentException($"Unsupported bridge command type: {command.GetType().Name}",
                 nameof(command))
         };

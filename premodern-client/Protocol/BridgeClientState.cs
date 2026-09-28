@@ -9,6 +9,7 @@ public sealed class BridgeClientState
     public InteractionMessage? CurrentInteraction { get; private set; }
     public ControllerMessage? Controller { get; private set; }
     public QueryMessage? PendingQuery { get; private set; }
+    public RevealMessage? LatestReveal { get; private set; }
     public string? LastError { get; private set; }
     public string? LastNotice { get; private set; }
     public string? LastActionStatus { get; private set; }
@@ -50,6 +51,10 @@ public sealed class BridgeClientState
                 PendingQuery = query;
                 LastNotice = $"Pending human query {query.RequestId} ({query.Kind}).";
                 break;
+            case RevealMessage reveal:
+                LatestReveal = reveal;
+                LastNotice = $"Forge revealed {reveal.Items.Count} item(s).";
+                break;
             case ErrorMessage error:
                 LastError = $"{error.Code}: {error.Message}";
                 if (error.RequestId == null)
@@ -62,7 +67,7 @@ public sealed class BridgeClientState
                     LastActionStatus = "Action rejected because the interaction changed. Choose again.";
                 }
                 bool retryableQueryError = error.Code is "invalidCombatDamageAssignment"
-                    or "invalidQueryChoice" or "invalidItemOrder";
+                    or "invalidQueryChoice" or "invalidItemOrder" or "invalidGenericChoice";
                 if (!retryableQueryError && error.RequestId != null
                     && PendingQuery?.RequestId == error.RequestId)
                 {
@@ -114,6 +119,13 @@ public sealed class BridgeClientState
                     PendingQuery = null;
                 }
                 LastActionStatus = $"Sent item order for query {reply.RequestId}; waiting for Forge.";
+                break;
+            case GenericChoiceReplyCommand reply:
+                if (PendingQuery?.RequestId == reply.RequestId)
+                {
+                    PendingQuery = null;
+                }
+                LastActionStatus = $"Sent generic choice for query {reply.RequestId}; waiting for Forge.";
                 break;
         }
     }
